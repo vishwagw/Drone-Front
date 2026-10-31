@@ -177,6 +177,24 @@ kbd {
 .bigstars .off { color: rgba(255, 255, 255, 0.18); }
 .best { color: var(--muted); font-size: 12px; }
 
+.row.me .lab, .row.me > span:last-child { color: var(--amber); }
+#feed { position: fixed; top: calc(var(--inset-t) + 66px); left: 50%; transform: translateX(-50%); display: grid; gap: 3px; justify-items: center; pointer-events: none; max-width: 46vw; }
+#feed div { font-family: var(--display); font-weight: 700; font-size: 15px; padding: 2px 10px; border-radius: 4px; background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+#feed b { color: var(--amber); font-weight: 800; }
+#respawn { position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; display: grid; gap: 6px; max-width: calc(100% - 32px); }
+#respawn b { font-family: var(--display); font-weight: 800; font-size: 40px; line-height: 1; color: var(--warn); text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6); }
+#respawn span { font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--text); text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6); }
+.arena-mode .camp-only { display: none !important; }
+.arena { border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 12px; }
+.arenahead { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; }
+h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1; }
+.online { color: var(--ok); font-size: 12px; }
+.arenaform { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.arenaform label { display: grid; gap: 4px; font-family: var(--display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-size: 12px; }
+.arenaform input { font: 14px var(--mono); color: var(--text); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; width: 160px; box-sizing: border-box; -webkit-user-select: text; user-select: text; }
+.arenaform input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+
 @media (max-width: 720px) { .levels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) {
   #map { width: 116px; height: 116px; }
@@ -199,6 +217,8 @@ kbd {
   <div id="lock" hidden><div id="lockHp"><div></div></div></div>
   <div id="reticle"></div>
   <div id="pop"></div>
+  <div id="feed" aria-live="polite"></div>
+  <div id="respawn" hidden><b id="respawnTitle"></b><span id="respawnText"></span></div>
   <section class="panel tl" aria-label="Mission">
     <div class="lvlname" id="hLevel"></div>
     <div id="hObj"></div>
@@ -209,8 +229,8 @@ kbd {
   <section class="panel bl" aria-label="Telemetry">
     <div class="row"><span class="lab">Hull</span><span id="hHullTxt">100%</span></div>
     <div class="bar"><div id="hHull"></div></div>
-    <div class="row"><span class="lab">Battery</span><span id="hBattTxt">100%</span></div>
-    <div class="bar"><div id="hBatt"></div></div>
+    <div class="row camp-only"><span class="lab">Battery</span><span id="hBattTxt">100%</span></div>
+    <div class="bar camp-only"><div id="hBatt"></div></div>
     <div class="row"><span class="lab">Gun heat</span><span id="hHeatTxt">0%</span></div>
     <div class="bar"><div id="hHeat" style="width:0%"></div></div>
     <div class="row"><span class="lab">Rockets</span><span id="hRkt">0</span></div>
@@ -231,6 +251,19 @@ kbd {
     <h1>Drone Front</h1>
     <p>Fly an armed quadcopter from a forward operating base. Each sortie is a new battlefield with its own objective, from a qualification run on the test range to bringing down a drone carrier at night. Finish a sortie to unlock the next.</p>
     <div class="levels" id="levels"></div>
+    <section class="arena" aria-label="Online arena">
+      <div class="arenahead">
+        <div><div class="lab">Online arena · free-for-all</div><h3>Fight other pilots</h3></div>
+        <span class="online" id="onlineTxt"></span>
+      </div>
+      <p class="dim">Everyone who joins the same arena code flies in one match. First to 10 kills wins the round, then a new round starts. The pad in the middle of the map repairs your hull and reloads rockets.</p>
+      <div class="arenaform">
+        <label for="callsign">Callsign <input id="callsign" maxlength="14" autocomplete="off" spellcheck="false"></label>
+        <label for="arenaCode">Arena code <input id="arenaCode" maxlength="20" autocomplete="off" spellcheck="false"></label>
+        <button id="joinBtn" class="btn">Join arena</button>
+      </div>
+      <p class="dim" id="arenaNote"></p>
+    </section>
     <details>
       <summary class="lab">Controls</summary>
       <div class="keys">
@@ -274,7 +307,7 @@ kbd {
     <h2>Holding position</h2>
     <div class="actions">
       <button id="resumeBtn" class="btn">Resume</button>
-      <button id="restartBtn" class="btn ghost">Restart sortie</button>
+      <button id="restartBtn" class="btn ghost camp-only">Restart sortie</button>
       <button id="quitBtn" class="btn ghost">All sorties</button>
     </div>
   </div>
@@ -326,6 +359,10 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const fmtTime = (s) => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '').trim().slice(0, 14);
+const cleanCode = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 20) || 'public';
+const COLORS = [0xff6a55, 0x6fb8ff, 0x7fe0a0, 0xffb627, 0xc58bff, 0xff7ac0, 0x5ee0e0, 0xe8e2d0];
 
 // ---------- maps ----------
 const MAPS = {
@@ -339,6 +376,8 @@ const MAPS = {
     sun: 0xffe2c0, sunI: 2.6, hemi: [0xffe9d6, 0x7a4630, 1.3], sunDir: [90, 90, -30], scatter: [['rock', 90, 0xa25a38]] },
   dusk: { seed: 47, amp: 1.0, rim: 8, low: 0x8a8466, high: 0x6d6d58, peak: 0x9a9070, road: 0x4a4740, sky: 0xe0906a, fog: [120, 360],
     sun: 0xff9a5a, sunI: 2.1, hemi: [0xffc6a0, 0x40384a, 1.15], sunDir: [-140, 40, -60], scatter: [['building', 34, 0x8c8a86], ['tree', 14]] },
+  ruins: { seed: 71, amp: 1.2, rim: 16, low: 0x8f8a76, high: 0x77735f, peak: 0xa29c88, road: 0x5a574e, sky: 0xbcc6cb, fog: [130, 380],
+    sun: 0xfff0dc, sunI: 2.3, hemi: [0xe6eef6, 0x55524a, 1.35], sunDir: [70, 100, 50], scatter: [['building', 64, 0x9a958a], ['ruin', 44, 0x88837a], ['tree', 16]] },
   night: { seed: 59, amp: 1.6, rim: 12, low: 0x4c5a48, high: 0x3e4a3e, peak: 0x5a6656, road: 0x3a3833, sky: 0x18213a, fog: [100, 320],
     sun: 0xa8bcff, sunI: 1.0, hemi: [0x6f86c8, 0x1c2218, 0.75], sunDir: [-60, 120, -40], scatter: [['ruin', 34, 0x777a80], ['tree', 26]] },
 };
@@ -588,8 +627,10 @@ const drone = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, aim:
     drone.tilt.add(rail);
   }
   drone.tilt.add(body, top, stripe, drone.gunPivot);
+  drone.shell = shell;
   scene.add(drone.group);
 }
+const ME = { pos: drone.pos, vel: drone.vel };   // rocket target stand-in for this player's own drone
 
 // ---------- hostile models ----------
 const enemyDark = new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.55, metalness: 0.4 });
@@ -722,6 +763,7 @@ function addEnt(e) {
 function removeEnt(e, wreck = false) {
   const i = ents.indexOf(e); if (i >= 0) ents.splice(i, 1);
   if (G.lock === e) G.lock = null;
+  if (e.tag) { e.tag.tex.dispose(); e.tag.spr.material.dispose(); }
   if (!e.group) return;
   if (wreck) {
     e.group.traverse((o) => {
@@ -828,7 +870,7 @@ function updateEffects(dt) {
     const ax = b.pos.x, ay = b.pos.y, az = b.pos.z;
     b.pos.addScaledVector(b.vel, dt); b.life -= dt;
     let dead = b.life <= 0;
-    if (!dead) for (const e of ents) {
+    if (!dead && !b.vis) for (const e of ents) {
       if (segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, e.pos, e.radius)) { damage(e, b.dmg, b.pos); dead = true; break; }
     }
     if (!dead && b.pos.y < groundAt(b.pos.x, b.pos.z)) { burst(b.pos, 4, [M.road, M.low], 4, 0.5, 0.7, 2); dead = true; }
@@ -845,7 +887,7 @@ function updateEffects(dt) {
   rockets.items.forEach((r, i) => {
     if (!r.on) return;
     const t = r.target;
-    if (t && ents.includes(t)) {   // steer toward where the locked target will be
+    if (t && (t === ME || ents.includes(t))) {   // steer toward where the locked target will be
       _v.copy(t.pos).addScaledVector(t.vel, r.pos.distanceTo(t.pos) / 95).sub(r.pos).normalize().multiplyScalar(r.vel.length());
       r.vel.lerp(_v, 1 - Math.exp(-3.2 * dt));
     }
@@ -855,12 +897,13 @@ function updateEffects(dt) {
     r.trail -= dt;
     if (r.trail <= 0) { r.trail = 0.025; burst(r.pos, 1, [0xd8d4cc, 0x9a968e], 0.6, 0.9, 0.9, 1.2, -1); }
     let hit = r.life <= 0 || r.pos.y < groundAt(r.pos.x, r.pos.z);
-    if (!hit) for (const e of ents) if (segHit(ax, ay, az, r.pos.x, r.pos.y, r.pos.z, e.pos, e.radius + 0.6)) { hit = true; break; }
+    if (!hit) for (const e of ents) if (e !== r.owner && segHit(ax, ay, az, r.pos.x, r.pos.y, r.pos.z, e.pos, e.radius + 0.6)) { hit = true; break; }
+    if (!hit && r.vis && r.target === ME && G.alive && segHit(ax, ay, az, r.pos.x, r.pos.y, r.pos.z, drone.pos, 1.6)) hit = true;
     if (!hit) for (const o of obstacles) {
       const ox = r.pos.x - o.x, oz = r.pos.z - o.z;
       if (ox * ox + oz * oz < o.r * o.r * 0.7 && r.pos.y < o.top && r.pos.y > o.base) { hit = true; break; }
     }
-    if (hit) { r.on = false; rockets.mesh.setMatrixAt(i, HIDE); blast(r.pos.clone(), 6, 11); return; }
+    if (hit) { r.on = false; rockets.mesh.setMatrixAt(i, HIDE); if (r.vis) explode(r.pos, 1.1); else blast(r.pos.clone(), 6, 11); return; }
     _q.setFromUnitVectors(ZAXIS, _v.copy(r.vel).normalize());
     rockets.mesh.setMatrixAt(i, _m.compose(r.pos, _q, _s.set(1, 1, 1)));
   });
@@ -872,7 +915,7 @@ function updateEffects(dt) {
     const ax = b.pos.x, ay = b.pos.y, az = b.pos.z;
     b.pos.addScaledVector(b.vel, dt); b.life -= dt;
     let dead = b.life <= 0 || b.pos.y < groundAt(b.pos.x, b.pos.z);
-    if (!dead && G.state === 'play' && drone.group.visible && segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, drone.pos, 1.15)) {
+    if (!dead && G.state === 'play' && G.alive && segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, drone.pos, 1.15)) {
       hurt(b.dmg, 'Shot down'); burst(b.pos, 8, [0xff3b5c, 0xffffff], 7, 0.4, 0.8, 0); dead = true;
     }
     if (dead) { b.on = false; bolts.mesh.setMatrixAt(i, HIDE); return; }
@@ -918,10 +961,18 @@ function clearCombat() {
   }
   for (const f of fireballs) { f.life = 0; f.m.visible = false; }
   smokers.length = 0;
+  NET.pilots.clear();
 }
 
 // ---------- damage ----------
 function damage(e, n, at) {
+  if (e.kind === 'pilot') {   // another player: claim the hit, their page applies it
+    if (!e.net || !e.net.al || e.net.iv || e.net.r !== NET.round) return;
+    NET.claim(e.peer, n); e.flash = 1;
+    burst(at, 3, [0xffe08a, 0xffffff], 6, 0.25, 0.6, 0);
+    audio.blip(1800, 1200, 0.03, 'square', 0.03);
+    return;
+  }
   if (e.invuln) { burst(at, 3, [0x6fb8ff, 0xffffff], 6, 0.3, 0.6, 0); return; }
   e.hp -= n; e.flash = 1;
   burst(at, 3, [0xffe08a, 0xffffff], 6, 0.25, 0.6, 0);
@@ -937,14 +988,24 @@ function kill(e) {
   if (e.kind === 'hangar') e.group.scale.y = 0.35;
   removeEnt(e, !e.air && e.kind !== 'pod' && e.kind !== 'core');
 }
-function hurt(n, msg) {
+function hurt(n, msg, by = null) {
+  if (G.mode === 'arena') {
+    if (G.state !== 'play' || !G.alive || G.inv > 0) return;
+    if (by) G.lastHit = { by, t: G.t };
+    G.hull = Math.max(0, G.hull - n);
+    G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + n / 40);
+    G.shake = Math.max(G.shake, 0.35 + n / 50);
+    audio.hurt();
+    if (G.hull <= 0) arenaDie(msg, by || (G.lastHit && G.t - G.lastHit.t < 6 ? G.lastHit.by : null));
+    return;
+  }
   if (G.state !== 'play' || G.hull <= 0) return;
   G.hull = Math.max(0, G.hull - n);
   G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + n / 40);
   G.shake = Math.max(G.shake, 0.35 + n / 50);
   audio.hurt();
   if (G.hull <= 0) {
-    G.downMsg = msg; explode(drone.pos, 1.2); drone.group.visible = false; finish('down');
+    G.downMsg = msg; G.alive = false; explode(drone.pos, 1.2); drone.group.visible = false; finish('down');
   } else if (G.hull < 30 && !G.warned.hull) { G.warned.hull = true; toast('Hull critical: land on the pad to repair', 'warn'); }
 }
 function hitHQ(n) {
@@ -974,7 +1035,7 @@ function fireBolt(from, speed, dmg, spread = 0, size = 1, lead = 0.7) {
   b.pos.addScaledVector(b.vel, 0.04);
   if (d < 110) audio.blip(size > 1.2 ? 260 : 420, 140, 0.16, 'sawtooth', 0.05 * clamp(1.4 - d / 90, 0.2, 1));
 }
-const canShoot = () => G.state === 'play' && drone.group.visible && drone.airborne;
+const canShoot = () => G.state === 'play' && G.alive && drone.group.visible && drone.airborne;
 
 function airMove(e, dt, floorAdd = 5) {
   for (const o of ents) {
@@ -1118,6 +1179,84 @@ const AI = {
   },
 };
 AI.apc = AI.truck;
+AI.pilot = (e, dt) => {
+  const n = e.net; if (!n) return;
+  const P = n.p, V = n.v;
+  if (Array.isArray(P) && Array.isArray(V) && P.length === 3 && V.length === 3 && [...P, ...V].every(Number.isFinite)) {
+    const age = clamp((Date.now() - e.recv) / 1000, 0, 0.3);   // dead-reckon from the last update
+    _v.set(P[0] + V[0] * age, P[1] + V[1] * age, P[2] + V[2] * age);
+    if (!e.placed || e.pos.distanceToSquared(_v) > 400) { e.pos.copy(_v); e.placed = true; }
+    else e.pos.lerp(_v, 1 - Math.exp(-12 * dt));
+    e.vel.set(V[0], V[1], V[2]);
+  }
+  e.hp = clamp(+n.h || 0, 0, 100);
+  const alive = !!n.al;
+  if (e.wasAlive && !alive) explode(e.pos, 1.2);
+  e.wasAlive = alive;
+  airPose(e, dt, Number.isFinite(n.y) ? n.y : e.yaw);
+  e.group.visible = alive && !(n.iv && Math.floor(e.t * 10) % 2);
+  if (alive && n.f) {
+    e.fireT -= dt;
+    while (e.fireT <= 0) {
+      e.fireT += 1 / FIRE_RATE;
+      const dir = remoteAim(e, _v2), b = bullets.take();
+      b.vis = true; b.pos.copy(e.pos).addScaledVector(dir, 1.2);
+      b.vel.copy(dir).multiplyScalar(BULLET_SPEED).add(e.vel); b.life = 1.1;
+    }
+  } else e.fireT = 0;
+  if (n.rs !== e.rs) {
+    if (e.rs !== undefined && alive) {
+      const dir = remoteAim(e, _v2), r = rockets.take();
+      r.vis = true; r.owner = e; r.pos.copy(e.pos).addScaledVector(dir, 1.5);
+      r.vel.copy(dir).multiplyScalar(45).add(e.vel); r.life = 3.2; r.trail = 0; r.target = e.aimAt;
+      if (e.pos.distanceTo(drone.pos) < 120) audio.rocket();
+    }
+    e.rs = n.rs;
+  }
+  const col = ((n.c | 0) % 8 + 8) % 8, nm = cleanName(n.n) || 'Pilot', hpb = Math.round(e.hp / 5);
+  if (nm !== e.name || hpb !== e.tagHp || col !== e.col) {
+    e.name = nm; e.tagHp = hpb; e.col = col;
+    e.mats[0].color.setHex(COLORS[col]); e.stripe.material.color.setHex(COLORS[col]);
+    drawTag(e);
+  }
+};
+function remoteAim(e, out) {   // where another pilot's guns point: their lock target, else their sight line
+  const lk = e.net.lk;
+  e.aimAt = null;
+  if (lk && lk === NET.myKey()) e.aimAt = ME;
+  else if (lk) e.aimAt = ents.find((x) => x.kind === 'pilot' && 'p_' + x.peer === lk) || null;
+  if (e.aimAt) return out.copy(e.aimAt.pos).sub(e.pos).normalize();
+  const yaw = Number.isFinite(e.net.y) ? e.net.y : e.yaw, aim = Number.isFinite(e.net.a) ? clamp(e.net.a, -1, 1) : 0;
+  return out.set(-Math.sin(yaw) * Math.cos(aim), Math.sin(aim), -Math.cos(yaw) * Math.cos(aim));
+}
+function makeTag() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 72;
+  const tex = new THREE.CanvasTexture(c);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true }));
+  spr.scale.set(5.6, 1.575, 1); spr.position.y = 2.4;
+  return { c, tex, spr };
+}
+function drawTag(e) {
+  const { c, tex } = e.tag, g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  g.font = '700 30px "Saira Condensed", "Arial Narrow", sans-serif'; g.textAlign = 'center';
+  g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,0.65)'; g.strokeText(e.name, 128, 34);
+  g.fillStyle = '#ffffff'; g.fillText(e.name, 128, 34);
+  g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(48, 46, 160, 10);
+  g.fillStyle = hex(COLORS[e.col]); g.fillRect(48, 46, 160 * e.hp / 100, 10);
+  tex.needsUpdate = true;
+}
+function addPilot(peer) {
+  const shell = shellMat(0x888888);
+  const rig = buildCopter({ arms: 4, size: 1, dark: enemyDark, ledFront: redEye, ledBack: redEye });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.3, 1.3), shell); body.castShadow = true;
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.05, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff })); stripe.position.set(0, 0.17, -0.35);
+  const guns = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.16, 0.9), enemyDark); guns.position.set(0, -0.25, -0.5);
+  rig.tilt.add(body, stripe, guns);
+  const tag = makeTag(); rig.group.add(tag.spr);
+  return addEnt({ kind: 'pilot', air: true, peer, name: '', radius: 1.6, hp: 100, score: 0, boom: 1.2,
+    group: rig.group, tilt: rig.tilt, rotors: rig.rotors, mats: [shell], stripe, tag, fireT: 0, col: -1, recv: Date.now() });
+}
 function escaped(e) {
   removeEnt(e);
   G.escaped++;
@@ -1268,6 +1407,226 @@ const LEVELS = [
   },
 ];
 
+const ROUND_KILLS = 10, PVP_DAMAGE = 3.5;
+const ARENA = {
+  id: 'arena', name: 'Arena', map: 'ruins', rockets: 6, par: 0, pad: { x: 0, z: 0 }, arena: true,
+  goals: ['First to 10 kills wins the round'],
+  setup() { S.botT = 3; },
+  tick(dt) {   // practice bots fly only while nobody else is in the arena
+    const bots = ents.filter((e) => e.bot);
+    if (NET.pilots.size > 0) { for (const b of bots) { explode(b.pos, 0.6); removeEnt(b); } return; }
+    if (bots.length < 3) { S.botT -= dt; if (S.botT <= 0) { S.botT = 5; spawnAir('scout', { from: 'any', extra: { bot: true, score: 0, name: 'Practice bot' } }); } }
+  },
+  status: () => {
+    const rows = NET.list.slice(0, 6).map((a) => [a.me ? `${a.name} (you)` : a.name, `${a.k} K · ${a.d} D`, false, a.me ? 'me' : '']);
+    if (!NET.list.some((a, i) => a.me && i < 6)) { const me = NET.list.find((a) => a.me); if (me) rows.push([`${me.name} (you)`, `${me.k} K · ${me.d} D`, false, 'me']); }
+    return rows.length ? rows : [['Waiting for the room', '…']];
+  },
+};
+function arenaSpawnPoint() {
+  let best = null, bd = -1;
+  for (let k = 0; k < 10; k++) {
+    const a = Math.random() * Math.PI * 2, x = Math.cos(a) * 125, z = Math.sin(a) * 125;
+    let near = 1e9;
+    for (const e of ents) if (e.kind === 'pilot' && e.net?.al) near = Math.min(near, Math.hypot(e.pos.x - x, e.pos.z - z));
+    if (near > bd) { bd = near; best = { x, z }; }
+  }
+  return best;
+}
+function respawnArena() {
+  const s = arenaSpawnPoint();
+  drone.pos.set(s.x, terrainH(s.x, s.z) + 24, s.z); drone.vel.set(0, 0, 0);
+  drone.yaw = Math.atan2(s.x, s.z); drone.aim = -0.08;
+  drone.powered = true; drone.airborne = true; drone.agl = 24; drone.group.visible = true;
+  Object.assign(G, { hull: 100, rockets: L.rockets, heat: 0, overheated: false, alive: true, inv: 2.5, lastHit: null, lock: null });
+  $('respawn').hidden = true;
+  camera.position.set(drone.pos.x + Math.sin(drone.yaw) * 12, drone.pos.y + 5, drone.pos.z + Math.cos(drone.yaw) * 12);
+}
+function arenaDie(msg, by) {
+  G.alive = false; G.respawnT = 4; G.firing = false; mouseFire = false;
+  explode(drone.pos, 1.2); drone.group.visible = false; drone.vel.set(0, 0, 0);
+  const key = by ? 'p_' + by : 'env';
+  NET.deathsBy[key] = (NET.deathsBy[key] || 0) + 1;
+  $('respawnTitle').textContent = by ? `Downed by ${NET.nameOf(by)}` : msg;
+  $('respawn').hidden = false;
+  NET.send();
+}
+
+// ---------- network (room capability) ----------
+const NET = {
+  lobby: null, room: null, named: null, code: 'public', name: '', color: 0, round: 0, me: null,
+  hits: {}, deathsBy: {}, seen: {}, prevDb: {}, pilots: new Map(), list: [], sendT: 0, roundOverAt: 0,
+  async init() {
+    try { this.lobby = window.claude?.use ? await window.claude.use('room') : null; } catch { this.lobby = null; }
+    renderArenaBox();
+    if (!this.lobby) return;
+    this.lobby.onPeers(() => renderOnline(), () => { this.lobby = null; renderArenaBox(); });
+  },
+  myKey() { return this.me ? 'p_' + this.me : null; },
+  nameOf(peer) { return this.pilots.get(peer)?.name || 'another pilot'; },
+  resetRound(r) { this.round = r; this.hits = {}; this.deathsBy = {}; this.seen = {}; this.prevDb = {}; this.roundOverAt = 0; },
+  async join(code) {
+    this.code = code; this.resetRound(0); this.pilots.clear(); this.list = [];
+    this.named = null;
+    try { this.named = await this.lobby.join('arena-' + code); this.room = this.named; }
+    catch { this.room = this.lobby; }   // named rooms unavailable: share the lobby
+    this.lobby.presence({ ar: code }).catch(() => {});
+  },
+  leave() {
+    if (this.named) this.named.leave().catch(() => {});
+    else this.room?.presence({ pl: null }).catch(() => {});
+    this.lobby?.presence({ ar: null }).catch(() => {});
+    this.room = this.named = null; this.pilots.clear(); this.list = [];
+  },
+  claim(peer, n) {
+    const key = 'p_' + peer;
+    this.hits[key] = Math.round(((this.hits[key] || 0) + n * PVP_DAMAGE) * 10) / 10;
+  },
+  send() {
+    if (!this.room) return;
+    const d = drone, r2 = (x) => Math.round(x * 100) / 100;
+    const hits = {};
+    for (const peer of this.pilots.keys()) if (this.hits['p_' + peer]) hits['p_' + peer] = this.hits['p_' + peer];
+    const db = Object.fromEntries(Object.entries(this.deathsBy).slice(-24));
+    this.room.presence({ pl: {
+      n: this.name, c: this.color, r: this.round,
+      p: [r2(d.pos.x), r2(d.pos.y), r2(d.pos.z)], v: [r2(d.vel.x), r2(d.vel.y), r2(d.vel.z)],
+      y: Math.round(d.yaw * 1000) / 1000, a: Math.round(d.aim * 1000) / 1000,
+      h: Math.round(G.hull), al: G.alive ? 1 : 0, iv: G.inv > 0 ? 1 : 0, f: G.firing ? 1 : 0, rs: G.rs,
+      lk: G.lock?.kind === 'pilot' ? 'p_' + G.lock.peer : null, hits, db,
+    } }).catch(() => {});
+  },
+  tick(dt) {
+    const room = this.room; if (!room) return;
+    const peers = room.peers();
+    const mine = peers.find((p) => p.isMe && p.sameTab); if (mine) this.me = mine.peer;
+    let maxRound = this.round;
+    for (const p of peers) { const r = p.presence?.pl?.r; if (Number.isInteger(r) && r > maxRound && r < this.round + 1000) maxRound = r; }
+    if (maxRound > this.round) { this.resetRound(maxRound); if (G.alive) G.inv = 2.5; toast(`Round ${maxRound + 1}`, 'amber'); }
+    const live = new Set(), myKey = this.myKey();
+    for (const p of peers) {
+      if (p.isMe && p.sameTab) continue;
+      const pl = p.presence?.pl; if (!pl || typeof pl !== 'object') continue;
+      live.add(p.peer);
+      let e = this.pilots.get(p.peer);
+      if (!e || !ents.includes(e)) { e = addPilot(p.peer); this.pilots.set(p.peer, e); }
+      if (e.net !== pl) { e.net = pl; e.recv = p.updatedAt || Date.now(); }
+      if (pl.r === this.round && myKey) {   // hits that pilot says it landed on me
+        const dealt = Number(pl.hits?.[myKey]) || 0, seen = this.seen[p.peer] || 0;
+        if (dealt > seen) { this.seen[p.peer] = dealt; if (dealt - seen < 150) hurt(dealt - seen, 'Shot down', p.peer); }
+      }
+    }
+    for (const [peer, e] of this.pilots) if (!live.has(peer)) { removeEnt(e); this.pilots.delete(peer); }
+    this.list = this.board(peers);
+    this.feed();
+    const top = this.list[0];
+    if (!this.roundOverAt && top && top.k >= ROUND_KILLS) {
+      this.roundOverAt = performance.now();
+      toast(top.me ? 'You win the round' : `${top.name} wins the round`, top.me ? 'ok' : 'amber');
+      audio.blip(520, 1040, 0.5, 'triangle', 0.18);
+    }
+    if (this.roundOverAt && performance.now() - this.roundOverAt > 8000) {
+      this.resetRound(this.round + 1); respawnArena(); toast(`Round ${this.round + 1}`, 'amber');
+    }
+    this.sendT -= dt;
+    if (this.sendT <= 0) { this.sendT = 1 / 15; this.send(); }
+  },
+  board(peers) {
+    const list = [];
+    for (const p of peers) {
+      const pl = p.presence?.pl;
+      if (!pl || pl.r !== this.round) continue;
+      list.push({ peer: p.peer, me: p.isMe && p.sameTab, name: cleanName(pl.n) || 'Pilot', db: pl.db && typeof pl.db === 'object' ? pl.db : {}, k: 0, d: 0 });
+    }
+    if (!list.some((a) => a.me) && G.mode === 'arena') list.push({ peer: this.me, me: true, name: this.name, db: this.deathsBy, k: 0, d: 0 });
+    for (const a of list) for (const v of Object.values(a.db)) a.d += Number(v) || 0;
+    for (const b of list) for (const [key, v] of Object.entries(b.db)) {
+      const killer = list.find((a) => 'p_' + a.peer === key);
+      if (killer && killer !== b) killer.k += Number(v) || 0;
+    }
+    return list.sort((x, y) => y.k - x.k || x.d - y.d);
+  },
+  feed() {
+    for (const b of this.list) {
+      const prev = this.prevDb[b.peer];
+      if (prev) for (const [key, v] of Object.entries(b.db)) {
+        if ((Number(v) || 0) <= (Number(prev[key]) || 0)) continue;
+        const killer = key === 'env' ? null : this.list.find((a) => 'p_' + a.peer === key);
+        const el = document.createElement('div');
+        if (killer) { const k = document.createElement('b'); k.textContent = killer.me ? 'You' : killer.name; el.append(k, ` downed ${b.me ? 'you' : b.name}`); }
+        else el.textContent = `${b.me ? 'You' : b.name} went down`;
+        $('feed').prepend(el);
+        while ($('feed').children.length > 4) $('feed').lastChild.remove();
+        setTimeout(() => el.remove(), 6000);
+        if (killer?.me && !b.me) { pop('+1 kill'); audio.blip(700, 1400, 0.25, 'triangle', 0.12); }
+      }
+      this.prevDb[b.peer] = { ...b.db };
+    }
+  },
+};
+function renderArenaBox() {
+  const ok = !!NET.lobby;
+  $('joinBtn').disabled = !ok;
+  $('arenaNote').textContent = ok
+    ? 'Other players need access to this page to join: share it from the Share menu and give them your arena code.'
+    : 'Online play needs this page open in Claude while signed in. This copy can still run the campaign.';
+  if (!ok) $('onlineTxt').textContent = 'Offline';
+  else renderOnline();
+}
+function renderOnline() {
+  if (!NET.lobby) return;
+  const counts = {};
+  for (const p of NET.lobby.peers()) { const ar = p.presence?.ar; if (typeof ar === 'string') { const c = cleanCode(ar); counts[c] = (counts[c] || 0) + 1; } }
+  const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, n]) => `${k}: ${n}`);
+  $('onlineTxt').textContent = parts.length ? `Flying now · ${parts.join(' · ')}` : 'Nobody in an arena right now';
+}
+{
+  let cs = '', col = -1;
+  try { cs = localStorage.getItem('drone-front-callsign') || ''; col = Number(localStorage.getItem('drone-front-color')); } catch { /* storage unavailable */ }
+  if (!cs) cs = `${['Viper', 'Hawk', 'Wasp', 'Kite', 'Raven', 'Moth', 'Hornet', 'Shrike'][Math.floor(Math.random() * 8)]}-${Math.floor(rand(10, 99))}`;
+  if (!(col >= 0 && col < 8)) col = Math.floor(Math.random() * 8);
+  $('callsign').value = cs; $('arenaCode').value = 'public';
+  NET.name = cs; NET.color = col;
+  renderArenaBox();
+}
+async function startArena() {
+  if (!NET.lobby) return;
+  const btn = $('joinBtn');
+  btn.disabled = true; btn.textContent = 'Joining…';
+  NET.name = cleanName($('callsign').value) || 'Pilot';
+  const code = cleanCode($('arenaCode').value);
+  $('callsign').value = NET.name; $('arenaCode').value = code;
+  try { localStorage.setItem('drone-front-callsign', NET.name); localStorage.setItem('drone-front-color', String(NET.color)); } catch { /* storage unavailable */ }
+  audio.init(); audio.ctx?.resume?.();
+  await NET.join(code);
+  btn.disabled = false; btn.textContent = 'Join arena';
+  G.mode = 'arena'; document.body.classList.add('arena-mode');
+  loadLevel(ARENA);
+  Object.assign(G, { t: 0, score: 0, kills: 0, battery: 100, refill: 0, refill2: 0, rs: 0, firing: false, paused: false,
+    shake: 0, hurtFlash: 0, bump: 0, warned: {}, fireMul: 1 });
+  S = { spawned: {}, ready: false, queue: [] };
+  L.setup();
+  drone.shell.color.setHex(COLORS[NET.color]);
+  $('hLevel').innerHTML = `<small>Arena</small>${esc(code)}`;
+  objCache = '';
+  for (const id of ['menu', 'brief', 'end', 'pause']) $(id).hidden = true;
+  $('feed').textContent = '';
+  $('hud').hidden = false;
+  G.state = 'play';
+  respawnArena();
+  requestLock();
+  toast('First to 10 kills wins the round', 'amber');
+}
+function leaveArena() {
+  NET.leave();
+  G.mode = 'campaign'; G.paused = false; document.body.classList.remove('arena-mode');
+  drone.shell.color.setHex(0x8c9478);
+  $('respawn').hidden = true; $('feed').textContent = '';
+  loadLevel(0); showMenu();
+}
+$('joinBtn').addEventListener('click', startArena);
+for (const id of ['callsign', 'arenaCode']) $(id).addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') startArena(); });
+
 // ---------- input ----------
 const keys = new Set();
 const stickL = { x: 0, y: 0 }, stickR = { x: 0, y: 0 };
@@ -1307,7 +1666,7 @@ addEventListener('mousemove', (e) => {
   drone.aim = clamp(drone.aim - e.movementY * 0.0022, -0.9, 0.45);
 });
 document.addEventListener('pointerlockchange', () => {
-  if (!pointerLocked()) { lockLostAt = performance.now(); mouseFire = false; if (G.state === 'play') togglePause(); }
+  if (!pointerLocked()) { lockLostAt = performance.now(); mouseFire = false; if (G.state === 'play' && !(G.mode === 'arena' && G.paused)) togglePause(); }
 });
 function makeStick(el, out) {
   const knob = el.querySelector('.knob'); let id = null, cx = 0, cy = 0; const R = 44;
@@ -1394,7 +1753,7 @@ function saveProgress() { try { localStorage.setItem('drone-front-progress', JSO
 const unlocked = (i) => i === 0 || (progress.stars[LEVELS[i - 1].id] || 0) > 0;
 
 // ---------- game state ----------
-const G = { state: 'menu', level: 0, t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: 0, refill: 0,
+const G = { state: 'menu', mode: 'campaign', alive: true, inv: 0, paused: false, rs: 0, firing: false, level: 0, t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: 0, refill: 0,
   barrel: 0, shake: 0, hurtFlash: 0, bump: 0, lock: null, warned: {}, hq: 100, escaped: 0, fireMul: 1 };
 let L = LEVELS[0], S = { spawned: {} };
 
@@ -1407,7 +1766,10 @@ function warnOnce(key, text, kind, cooldown) {
 }
 
 function loadLevel(i) {
-  G.level = i; L = LEVELS[i]; M = MAPS[L.map]; ROAD = L.road || null;
+  const lv = typeof i === 'number' ? LEVELS[i] : i;
+  if (typeof i === 'number') G.level = i;
+  L = lv; M = MAPS[L.map]; ROAD = L.road || null;
+  PAD.x = L.pad ? L.pad.x : 0; PAD.z = L.pad ? L.pad.z : 140;
   S = { spawned: {} };
   clearCombat();
   buildWorld(L);
@@ -1420,7 +1782,7 @@ function startLevel(i) {
   audio.init(); audio.ctx?.resume?.();
   loadLevel(i);
   Object.assign(G, { t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: L.rockets, refill: 0,
-    shake: 0, hurtFlash: 0, bump: 0, lock: null, warned: {}, hq: 100, escaped: 0, fireMul: 1 - i * 0.04 });
+    shake: 0, hurtFlash: 0, bump: 0, lock: null, warned: {}, hq: 100, escaped: 0, fireMul: 1 - i * 0.04, mode: 'campaign', alive: true, inv: 0, paused: false });
   S = { spawned: {}, ready: false, queue: [] };
   L.setup();
   $('hLevel').innerHTML = `<small>${String(i + 1).padStart(2, '0')}</small>${L.name}`;
@@ -1433,6 +1795,16 @@ function startLevel(i) {
   toast(L.goals[0], 'amber');
 }
 function togglePause() {
+  if (G.mode === 'arena') {   // the arena never stops: pausing only takes your hands off the sticks
+    G.paused = !G.paused;
+    $('pause').querySelector('h2').textContent = 'The arena is still live';
+    $('quitBtn').textContent = 'Leave arena';
+    $('pause').hidden = !G.paused;
+    if (G.paused) { mouseFire = false; if (pointerLocked()) document.exitPointerLock?.(); } else requestLock();
+    return;
+  }
+  $('pause').querySelector('h2').textContent = 'Holding position';
+  $('quitBtn').textContent = 'All sorties';
   if (G.state === 'play') { G.state = 'paused'; $('pause').hidden = false; audio.setMotor(0, 0); mouseFire = false; if (pointerLocked()) document.exitPointerLock?.(); }
   else if (G.state === 'paused') { G.state = 'play'; $('pause').hidden = true; requestLock(); }
 }
@@ -1519,11 +1891,11 @@ $('backBtn').addEventListener('click', showMenu);
 $('resumeBtn').addEventListener('click', togglePause);
 $('pauseBtn').addEventListener('click', togglePause);
 $('restartBtn').addEventListener('click', () => startLevel(G.level));
-$('quitBtn').addEventListener('click', () => { loadLevel(G.level); showMenu(); });
+$('quitBtn').addEventListener('click', () => { if (G.mode === 'arena') leaveArena(); else { loadLevel(G.level); showMenu(); } });
 $('retryBtn').addEventListener('click', () => startLevel(G.level));
 $('nextBtn').addEventListener('click', () => showBrief(G.level + 1));
 $('levelsBtn').addEventListener('click', () => { loadLevel(G.level); showMenu(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play') togglePause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play' && G.mode !== 'arena') togglePause(); });
 
 // ---------- player flight ----------
 const fwdV = new THREE.Vector3(), rightV = new THREE.Vector3(), aimV = new THREE.Vector3(), muzzle = new THREE.Vector3();
@@ -1561,7 +1933,7 @@ function updateDrone(dt, inp) {
       const vn = d.vel.x * nx + d.vel.z * nz;
       if (vn < 0) { d.vel.x -= 1.6 * vn * nx; d.vel.z -= 1.6 * vn * nz; }
       if (G.bump <= 0 && Math.abs(vn) > 2) { G.bump = 0.6; hurt(12, 'Crashed into cover'); burst(d.pos, 10, [0x777066, 0x8c9478], 6, 0.7, 0.8, 2); }
-      if (G.state !== 'play') return;
+      if (G.state !== 'play' || !G.alive) return;
     }
   }
 
@@ -1571,13 +1943,14 @@ function updateDrone(dt, inp) {
     d.pos.y = ground + 0.3; d.vel.y = Math.max(0, d.vel.y);
     const f = Math.exp(-7 * dt); d.vel.x *= f; d.vel.z *= f;
   }
-  if (G.state !== 'play') return;
+  if (G.state !== 'play' || !G.alive) return;
   d.agl = d.pos.y - ground;
   d.airborne = d.agl > 0.35;
   if (!d.powered && !d.airborne) return finish('flat');
 
   const move = Math.min(1, Math.hypot(inp.fwd, inp.strafe));
-  if (d.airborne && d.powered) G.battery -= (0.3 + 0.22 * move + 0.38 * Math.max(0, inp.vert)) * dt;
+  if (d.airborne && d.powered && G.mode !== 'arena') G.battery -= (0.3 + 0.22 * move + 0.38 * Math.max(0, inp.vert)) * dt;
+  if (G.mode === 'arena') { G.refill2 += dt; if (G.refill2 > 8 && G.rockets < L.rockets) { G.refill2 = 0; G.rockets++; } }
   d.charging = !d.airborne && onPad(d.pos.x, d.pos.z);
   if (d.charging) {
     G.battery = Math.min(100, G.battery + 20 * dt); G.hull = Math.min(100, G.hull + 12 * dt);
@@ -1604,7 +1977,7 @@ function updateDrone(dt, inp) {
 function updateLock() {
   let best = null, bs = Infinity;
   for (const e of ents) {
-    if (e.invuln) continue;
+    if (e.invuln || (e.kind === 'pilot' && (!e.net?.al || e.net?.iv))) continue;
     _v.copy(e.pos).sub(drone.pos);
     const d = _v.length();
     if (d > LOCK_RANGE || d < 2) continue;
@@ -1621,13 +1994,15 @@ function updateWeapons(dt, inp) {
   G.fireT -= dt; G.rocketT -= dt;
   G.heat = Math.max(0, G.heat - COOL_RATE * dt);
   if (G.overheated && G.heat < 0.35) G.overheated = false;
+  G.firing = inp.fire && drone.powered && !G.overheated;
   if (rocketQ) {
     rocketQ = false;
     if (G.rocketT > 0 || !drone.powered) { /* rails still cycling */ }
     else if (G.rockets <= 0) warnOnce('norkt', 'No rockets: land on the pad to rearm', 'warn', 2);
     else {
-      G.rockets--; G.rocketT = 0.45;
+      G.rockets--; G.rocketT = 0.45; G.rs++;
       const r = rockets.take();
+      r.vis = false; r.owner = null;
       r.pos.set(G.rockets % 2 ? 0.52 : -0.52, -0.15, -0.6).applyAxisAngle(UP, drone.yaw).add(drone.pos);
       if (G.lock) _v.copy(G.lock.pos).sub(r.pos).normalize(); else _v.copy(aimV);
       r.vel.copy(_v).multiplyScalar(45).add(drone.vel);
@@ -1641,7 +2016,7 @@ function updateWeapons(dt, inp) {
     G.barrel ^= 1;
     muzzle.set(G.barrel ? 0.28 : -0.28, -0.25, -0.9).applyAxisAngle(UP, drone.yaw).add(drone.pos);
     const b = bullets.take();
-    b.pos.copy(muzzle);
+    b.vis = false; b.pos.copy(muzzle);
     const t = G.lock;
     if (t) _v.copy(t.pos).addScaledVector(t.vel, t.pos.distanceTo(muzzle) / BULLET_SPEED).sub(muzzle).normalize();
     else _v.copy(aimV);
@@ -1675,6 +2050,15 @@ function setChip(text, kind) {
 }
 function updateChip() {
   const d = drone, extra = L.chip?.();
+  if (G.mode === 'arena') {
+    const others = NET.pilots.size;
+    if (!G.alive) setChip('Downed', 'warn');
+    else if (G.inv > 0) setChip('Spawn shield on', 'ok');
+    else if (G.overheated) setChip('Gun overheated: cooling down', 'warn');
+    else if (G.lock) setChip(`Locked: ${G.lock.name} · ${Math.round(G.lock.pos.distanceTo(d.pos))} m`, G.lock.kind === 'pilot' ? 'amber' : 'ok');
+    else setChip(others ? `${others + 1} pilots in this arena` : 'Nobody else here yet: practice bots are flying', 'ok');
+    return;
+  }
   if (!d.powered) setChip('Motors off', 'warn');
   else if (G.overheated) setChip('Gun overheated: cooling down', 'warn');
   else if (!d.airborne && d.charging && (G.battery < 99.5 || G.hull < 99.5 || G.rockets < L.rockets)) setChip(`Rearming · hull ${Math.round(G.hull)}% · battery ${Math.round(G.battery)}% · rockets ${G.rockets}`, 'amber');
@@ -1727,7 +2111,8 @@ function drawMap() {
   mctx.drawImage(treeLayer, 0, 0);
   const dot = Math.max(1.6, W / 100);
   for (const e of ents) {
-    mctx.fillStyle = e.obj ? '#ffb627' : '#ff3b5c';
+    if (e.kind === 'pilot' && !e.net?.al) continue;
+    mctx.fillStyle = e.kind === 'pilot' ? hex(COLORS[Math.max(0, e.col)]) : e.obj ? '#ffb627' : '#ff3b5c';
     const x = P(e.pos.x), y = P(e.pos.z), r = dot * (e.kind === 'hangar' || e.kind === 'core' ? 2 : e.kind === 'gunship' || e.kind === 'pod' ? 1.5 : 1.15);
     mctx.beginPath();
     if (e.air || e.kind === 'pod' || e.kind === 'core') { mctx.moveTo(x, y - r); mctx.lineTo(x + r, y); mctx.lineTo(x, y + r); mctx.lineTo(x - r, y); }
@@ -1754,11 +2139,11 @@ function toScreen(v) {
 let objCache = '';
 function updateHUD(dt) {
   const d = drone;
-  const html = L.status().map(([a, b, warn]) => `<div class="row${warn ? ' warn' : ''}"><span class="lab">${a}</span><span>${b}</span></div>`).join('');
+  const html = L.status().map(([a, b, warn, cls]) => `<div class="row${warn ? ' warn' : ''}${cls ? ' ' + cls : ''}"><span class="lab">${esc(a)}</span><span>${esc(b)}</span></div>`).join('');
   if (html !== objCache) { $('hObj').innerHTML = html; objCache = html; }
   $('hScore').textContent = G.score.toLocaleString();
   $('hTime').textContent = fmtTime(G.t);
-  $('hTime').style.color = G.t > L.par ? 'var(--muted)' : '';
+  $('hTime').style.color = G.t > L.par && G.mode !== 'arena' ? 'var(--muted)' : '';
   $('hAlt').textContent = `${Math.max(0, d.agl).toFixed(1)} m`;
   const setBar = (id, v, lo, mid) => { const el = $(id); el.style.width = `${v}%`; el.style.backgroundColor = v < lo ? 'var(--warn)' : v < mid ? 'var(--amber)' : 'var(--ok)'; };
   setBar('hHull', G.hull, 30, 60); $('hHullTxt').textContent = `${Math.ceil(G.hull)}%`;
@@ -1788,7 +2173,7 @@ function updateHUD(dt) {
   const cx = innerWidth / 2, cy = innerHeight / 2, mx = cx - 30, my = cy - 30;
   for (const e of sorted) {
     if (n >= inds.length) break;
-    if (e.kind === 'pod') continue;
+    if (e.kind === 'pod' || (e.kind === 'pilot' && !e.net?.al)) continue;
     const s = toScreen(e.pos);
     let x = s.ndc.x, y = s.ndc.y;
     if (!s.behind && Math.abs(x) < 1 && Math.abs(y) < 1) continue;
@@ -1818,7 +2203,9 @@ resize();
 loadLevel(0);
 renderLevels();
 
+const NO_INPUT = { fwd: 0, strafe: 0, vert: 0, yaw: 0, pitch: 0, fire: false };
 let last = performance.now(), menuT = 0;
+NET.init();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) $('toast').classList.remove('show'); }
@@ -1826,9 +2213,20 @@ function frame(now) {
   if (G.state === 'play' || G.state === 'over') {
     if (G.state === 'play') {
       if (!treeLayer || map.width !== Math.round(map.clientWidth * Math.min(devicePixelRatio, 2))) sizeMap();
-      const inp = readInput();
-      updateDrone(dt, inp);
-      if (G.state === 'play') { updateLock(); updateWeapons(dt, inp); }
+      const arena = G.mode === 'arena';
+      const inp = arena && (G.paused || !G.alive) ? NO_INPUT : readInput();
+      if (G.alive) updateDrone(dt, inp);
+      if (G.state === 'play' && G.alive) { updateLock(); updateWeapons(dt, inp); } else G.firing = false;
+      if (arena) {
+        G.inv = Math.max(0, G.inv - dt);
+        drone.group.visible = G.alive && !(G.inv > 0 && Math.floor(G.t * 10) % 2);
+        if (!G.alive) {
+          G.respawnT -= dt;
+          $('respawnText').textContent = `Respawning in ${Math.max(1, Math.ceil(G.respawnT))}`;
+          if (G.respawnT <= 0) respawnArena();
+        }
+        NET.tick(dt);
+      }
     }
     updateEnts(dt);
     updateEffects(dt);
