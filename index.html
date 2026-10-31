@@ -146,7 +146,7 @@ h1 { font-size: clamp(52px, 13vw, 84px); letter-spacing: -0.01em; }
 h2 { font-size: 44px; }
 .card p { margin: 0; line-height: 1.55; color: var(--text); max-width: 64ch; }
 .card p.dim { color: var(--muted); }
-.levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.levels { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
 .lvl {
   display: grid; gap: 4px; text-align: left; padding: 0 0 12px; border-radius: 6px; overflow: hidden; cursor: pointer;
   background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); color: var(--text); font: inherit;
@@ -195,7 +195,6 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
 .arenaform input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 
-@media (max-width: 720px) { .levels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) {
   #map { width: 116px; height: 116px; }
   .tl { min-width: 0; padding: 8px 10px; max-width: calc(100% - 160px); }
@@ -247,9 +246,9 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
 
 <div id="menu" class="overlay">
   <div class="card wide">
-    <div class="eyebrow">Strike drone campaign · 6 sorties</div>
+    <div class="eyebrow">Strike drone campaign · 7 sorties</div>
     <h1>Drone Front</h1>
-    <p>Fly an armed quadcopter from a forward operating base. Each sortie is a new battlefield with its own objective, from a qualification run on the test range to bringing down a drone carrier at night. Finish a sortie to unlock the next.</p>
+    <p>Fly an armed quadcopter from a forward operating base. Each sortie is a new battlefield with its own objective, from a qualification run on the test range to breaking an armoured push and bringing down a drone carrier at night. Finish a sortie to unlock the next.</p>
     <div class="levels" id="levels"></div>
     <section class="arena" aria-label="Online arena">
       <div class="arenahead">
@@ -378,6 +377,8 @@ const MAPS = {
     sun: 0xff9a5a, sunI: 2.1, hemi: [0xffc6a0, 0x40384a, 1.15], sunDir: [-140, 40, -60], scatter: [['building', 34, 0x8c8a86], ['tree', 14]] },
   ruins: { seed: 71, amp: 1.2, rim: 16, low: 0x8f8a76, high: 0x77735f, peak: 0xa29c88, road: 0x5a574e, sky: 0xbcc6cb, fog: [130, 380],
     sun: 0xfff0dc, sunI: 2.3, hemi: [0xe6eef6, 0x55524a, 1.35], sunDir: [70, 100, 50], scatter: [['building', 64, 0x9a958a], ['ruin', 44, 0x88837a], ['tree', 16]] },
+  badlands: { seed: 83, amp: 2.0, rim: 18, low: 0xa88f68, high: 0x8a7350, peak: 0xc4a87e, road: 0x6e5a42, sky: 0xdcc6a4, fog: [150, 410],
+    sun: 0xffdcb0, sunI: 2.4, hemi: [0xfff0dc, 0x7a6040, 1.35], sunDir: [-90, 60, 50], scatter: [['rock', 64, 0x9c7a52], ['tree', 12]] },
   night: { seed: 59, amp: 1.6, rim: 12, low: 0x4c5a48, high: 0x3e4a3e, peak: 0x5a6656, road: 0x3a3833, sky: 0x18213a, fog: [100, 320],
     sun: 0xa8bcff, sunI: 1.0, hemi: [0x6f86c8, 0x1c2218, 0.75], sunDir: [-60, 120, -40], scatter: [['ruin', 34, 0x777a80], ['tree', 26]] },
 };
@@ -710,6 +711,29 @@ function modelGround(kind) {
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), redEye); lamp.position.y = 1.3;
     dish.add(face, lamp); g.add(dish); out.dish = dish;
     out.hOff = 3;
+  } else if (kind === 'tank') {
+    box(3.0, 1.1, 5.4, olive, 0, 1.15, 0);
+    box(0.8, 0.9, 5.8, enemyDark, -1.45, 0.55, 0); box(0.8, 0.9, 5.8, enemyDark, 1.45, 0.55, 0);
+    const tur = new THREE.Group(); tur.position.set(0, 1.95, 0.3);
+    const tb = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.75, 2.4), olive); tb.castShadow = true;
+    const gun = new THREE.Group(); gun.position.set(0, 0.1, -1.1);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 3.4, 8), enemyDark); barrel.rotation.x = Math.PI / 2; barrel.position.z = -1.7;
+    const tip = new THREE.Object3D(); tip.position.z = -3.5;
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), redEye); eye.position.set(0.6, 0.45, -0.6);
+    gun.add(barrel, tip); tur.add(tb, gun, eye); g.add(tur);
+    out.turret = tur; out.gun = gun; out.tip = tip; out.hOff = 1.5;
+  } else if (kind === 'sam') {
+    box(2.2, 1.6, 1.8, olive, 0, 1.5, -2.3);
+    box(2.4, 0.6, 4.2, olive, 0, 1.2, 0.6);
+    wheels([-1.05, 1.05], [-2.3, 0.2, 2.0]);
+    const rack = new THREE.Group(); rack.position.set(0, 1.75, 1.0);
+    const tubes = new THREE.Group(); tubes.rotation.x = 0.6;
+    for (const tx of [-0.3, 0.3]) for (const ty of [0, 0.5]) {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 3, 10), enemyDark); t.rotation.x = Math.PI / 2; t.position.set(tx, ty, -0.6); tubes.add(t);
+    }
+    const tip = new THREE.Object3D(); tip.position.set(0, 0.25, -2.2); tubes.add(tip);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), redEye); lamp.position.set(0, 0.9, 0); rack.add(tubes, lamp);
+    g.add(rack); out.turret = rack; out.tip = tip; out.hOff = 1.5;
   } else if (kind === 'hangar') {
     const wall = shellMat(0x6c6e66); mats.push(wall);
     box(24, 5, 18, wall, 0, 2.5, 0);
@@ -801,13 +825,17 @@ const GROUND = {
   aa: { hp: 16, radius: 2.6, score: 300, name: 'AA gun', boom: 1.3 },
   radar: { hp: 12, radius: 3.2, score: 250, name: 'Radar', boom: 1.3 },
   hangar: { hp: 48, radius: 10, score: 600, name: 'Drone hangar', boom: 2.6 },
+  tank: { hp: 24, radius: 3.2, score: 400, name: 'Tank', boom: 1.8 },
+  sam: { hp: 14, radius: 3, score: 350, name: 'Missile truck', boom: 1.6 },
 };
 function spawnGround(kind, x, z, extra = {}) {
   const spec = GROUND[kind], m = modelGround(kind);
   const gy = terrainH(x, z);
   m.group.position.set(x, gy, z);
   const e = addEnt({ kind, pos: new THREE.Vector3(x, gy + m.hOff, z), hOff: m.hOff, hp: spec.hp, radius: spec.radius, score: spec.score,
-    name: spec.name, boom: spec.boom, group: m.group, mats: m.mats, turret: m.turret, head: m.head, guns: m.guns, dish: m.dish, ...extra });
+    name: spec.name, boom: spec.boom, group: m.group, mats: m.mats, turret: m.turret, head: m.head, guns: m.guns, dish: m.dish, gun: m.gun, tip: m.tip,
+    home: { x, z }, spd: 0, speed: kind === 'tank' ? 4.2 : kind === 'sam' ? 4.6 : undefined, ...extra });
+  if (kind === 'tank' || kind === 'sam') e.group.rotation.order = 'YXZ';
   e.group.rotation.y = e.yaw;
   if (kind === 'hangar') { e.obstacle = { x, z, r: 12, top: gy + 10.5, base: gy }; obstacles.push(e.obstacle); }
   if (kind === 'radar') { e.obstacle = { x, z, r: 2.4, top: gy + 7, base: gy }; obstacles.push(e.obstacle); }
@@ -829,6 +857,8 @@ const bullets = makePool(new THREE.BoxGeometry(0.09, 0.09, 2.6), new THREE.MeshB
 const bolts = makePool(new THREE.SphereGeometry(0.38, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3b5c }), 160);
 const rocketGeo = new THREE.CylinderGeometry(0.11, 0.11, 1.2, 8); rocketGeo.rotateX(Math.PI / 2);
 const rockets = makePool(rocketGeo, new THREE.MeshBasicMaterial({ color: 0xf2efe6 }), 16);
+const missileGeo = new THREE.CylinderGeometry(0.14, 0.14, 1.6, 8); missileGeo.rotateX(Math.PI / 2);
+const missiles = makePool(missileGeo, new THREE.MeshBasicMaterial({ color: 0xd94b3a }), 12);
 const sparks = makePool(new THREE.BoxGeometry(0.22, 0.22, 0.22), new THREE.MeshBasicMaterial({ color: 0xffffff }), 600);
 { const c = new THREE.Color(); for (let i = 0; i < 600; i++) sparks.mesh.setColorAt(i, c.setHex(0xffffff)); }
 const fireballs = [];
@@ -873,6 +903,11 @@ function updateEffects(dt) {
     if (!dead && !b.vis) for (const e of ents) {
       if (segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, e.pos, e.radius)) { damage(e, b.dmg, b.pos); dead = true; break; }
     }
+    if (!dead && !b.vis) for (const m of missiles.items) {
+      if (m.on && segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, m.pos, 1.3)) {
+        m.on = false; missiles.mesh.setMatrixAt(m.i, HIDE); explode(m.pos, 0.6); G.score += 25; pop('+25 missile'); dead = true; break;
+      }
+    }
     if (!dead && b.pos.y < groundAt(b.pos.x, b.pos.z)) { burst(b.pos, 4, [M.road, M.low], 4, 0.5, 0.7, 2); dead = true; }
     if (!dead) for (const o of obstacles) {
       const ox = b.pos.x - o.x, oz = b.pos.z - o.z;
@@ -909,12 +944,49 @@ function updateEffects(dt) {
   });
   rockets.mesh.instanceMatrix.needsUpdate = true;
 
+  let incoming = 0;
+  missiles.items.forEach((m, i) => {
+    if (!m.on) return;
+    incoming++;
+    const ax = m.pos.x, ay = m.pos.y, az = m.pos.z, speed = Math.min(58, m.vel.length() + 40 * dt);
+    if (G.alive) {   // turn-rate-limited homing: hard turns and cover beat it
+      _v.copy(drone.pos).sub(m.pos).normalize(); _v2.copy(m.vel).normalize();
+      const ang = _v2.angleTo(_v);
+      if (ang > 1e-4) _v2.lerp(_v, Math.min(1, 1.15 * dt / ang)).normalize();
+      m.vel.copy(_v2).multiplyScalar(speed);
+    }
+    m.pos.addScaledVector(m.vel, dt); m.life -= dt;
+    m.trail -= dt;
+    if (m.trail <= 0) { m.trail = 0.03; burst(m.pos, 1, [0xe8e2d6, 0xb0aaa0], 0.6, 1.1, 1, 1.2, -1); }
+    let hit = null;
+    if (G.alive && G.state === 'play' && segHit(ax, ay, az, m.pos.x, m.pos.y, m.pos.z, drone.pos, 1.5)) hit = 'me';
+    else if (m.life <= 0 || m.pos.y < groundAt(m.pos.x, m.pos.z)) hit = 'x';
+    else for (const o of obstacles) {
+      const ox = m.pos.x - o.x, oz = m.pos.z - o.z;
+      if (ox * ox + oz * oz < o.r * o.r * 0.7 && m.pos.y < o.top && m.pos.y > o.base) { hit = 'x'; break; }
+    }
+    if (hit) {
+      m.on = false; missiles.mesh.setMatrixAt(i, HIDE); explode(m.pos, 0.9);
+      if (hit === 'me') hurt(18, 'Hit by a missile');
+      return;
+    }
+    _q.setFromUnitVectors(ZAXIS, _v.copy(m.vel).normalize());
+    missiles.mesh.setMatrixAt(i, _m.compose(m.pos, _q, _s.set(1, 1, 1)));
+  });
+  missiles.mesh.instanceMatrix.needsUpdate = true;
+  G.incoming = incoming;
+  if (incoming && G.state === 'play' && G.alive) { G.mBeep -= dt; if (G.mBeep <= 0) { G.mBeep = 0.4; audio.blip(1250, 1250, 0.06, 'square', 0.05); } }
+
   const pulse = 1 + 0.18 * Math.sin(performance.now() * 0.03);
   bolts.items.forEach((b, i) => {
     if (!b.on) return;
     const ax = b.pos.x, ay = b.pos.y, az = b.pos.z;
     b.pos.addScaledVector(b.vel, dt); b.life -= dt;
     let dead = b.life <= 0 || b.pos.y < groundAt(b.pos.x, b.pos.z);
+    if (!dead) for (const o of obstacles) {   // hostile fire stops at cover
+      const ox = b.pos.x - o.x, oz = b.pos.z - o.z;
+      if (ox * ox + oz * oz < o.r * o.r * 0.7 && b.pos.y < o.top && b.pos.y > o.base + 0.5) { burst(b.pos, 4, [0xff3b5c, 0x777066], 4, 0.4, 0.7, 1); dead = true; break; }
+    }
     if (!dead && G.state === 'play' && G.alive && segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, drone.pos, 1.15)) {
       hurt(b.dmg, 'Shot down'); burst(b.pos, 8, [0xff3b5c, 0xffffff], 7, 0.4, 0.8, 0); dead = true;
     }
@@ -955,7 +1027,8 @@ function updateEffects(dt) {
 }
 function clearCombat() {
   while (ents.length) removeEnt(ents[0]);
-  for (const pool of [bullets, bolts, sparks, rockets]) {
+  G.incoming = 0;
+  for (const pool of [bullets, bolts, sparks, rockets, missiles]) {
     pool.items.forEach((it, i) => { it.on = false; pool.mesh.setMatrixAt(i, HIDE); });
     pool.mesh.instanceMatrix.needsUpdate = true;
   }
@@ -981,7 +1054,7 @@ function damage(e, n, at) {
 }
 function kill(e) {
   G.score += e.score; G.kills++;
-  pop(`+${e.score}`);
+  if (e.score) pop(`+${e.score}`);
   explode(e.pos, e.boom);
   if (e.onDeath) e.onDeath(e);
   if (e.obstacle) e.obstacle.top = e.obstacle.base + (e.kind === 'hangar' ? 3.2 : 1.5);
@@ -1179,6 +1252,89 @@ const AI = {
   },
 };
 AI.apc = AI.truck;
+function vehicleNav(e, dt, standoff) {   // where an armed vehicle wants to drive: [x, z, speed]
+  const dx = drone.pos.x - e.pos.x, dz = drone.pos.z - e.pos.z, dP = Math.hypot(dx, dz) || 1;
+  if (canShoot() && dP < 170) e.hunt = 6; else e.hunt = (e.hunt || 0) - dt;
+  if (e.hunt > 0 && (!e.goal || dP < 90)) {
+    if (dP > standoff[1]) return [drone.pos.x, drone.pos.z, e.speed];
+    if (dP < standoff[0]) return [e.pos.x - dx / dP * 30, e.pos.z - dz / dP * 30, e.speed];
+    e.circ ||= Math.random() < 0.5 ? -1 : 1;
+    return [e.pos.x - dz / dP * 20 * e.circ, e.pos.z + dx / dP * 20 * e.circ, e.speed * 0.6];
+  }
+  if (e.goal) return [e.goal.x, e.goal.z, e.speed];
+  if (!e.wp || Math.hypot(e.wp.x - e.pos.x, e.wp.z - e.pos.z) < 4) e.wp = { x: clamp(e.home.x + rand(-35, 35), -180, 180), z: clamp(e.home.z + rand(-35, 35), -180, 180) };
+  return [e.wp.x, e.wp.z, e.speed * 0.5];
+}
+function drive(e, tx, tz, sp, dt) {
+  let dx = tx - e.pos.x, dz = tz - e.pos.z;
+  const d = Math.hypot(dx, dz);
+  if (d > 0.01) { dx /= d; dz /= d; }
+  for (const o of obstacles) {   // steer around cover and other vehicles
+    if (o.top - o.base < 1.2) continue;
+    const ox = e.pos.x - o.x, oz = e.pos.z - o.z, r = o.r + e.radius + 4, d2 = ox * ox + oz * oz;
+    if (d2 < r * r) { const dd = Math.sqrt(d2) || 1, k = (r - dd) / r * 2; dx += ox / dd * k; dz += oz / dd * k; }
+  }
+  for (const o of ents) {
+    if (o === e || o.air || (!o.path && !o.speed)) continue;
+    const ox = e.pos.x - o.pos.x, oz = e.pos.z - o.pos.z, d2 = ox * ox + oz * oz;
+    if (d2 < 100 && d2 > 0.01) { const dd = Math.sqrt(d2), k = (10 - dd) / 10 * 2; dx += ox / dd * k; dz += oz / dd * k; }
+  }
+  const diff = wrapAngle(Math.atan2(-dx, -dz) - e.yaw);
+  e.yaw += clamp(diff, -1.1 * dt, 1.1 * dt);
+  const want = (d < 3 ? 0 : sp) * clamp(1 - Math.abs(diff) / 1.8, 0.2, 1);
+  e.spd += (want - e.spd) * (1 - Math.exp(-2 * dt));
+  const nx = clamp(e.pos.x - Math.sin(e.yaw) * e.spd * dt, -185, 185), nz = clamp(e.pos.z - Math.cos(e.yaw) * e.spd * dt, -185, 185);
+  let blocked = false;
+  for (const o of obstacles) {
+    if (o.top - o.base < 1.2) continue;
+    const ox = nx - o.x, oz = nz - o.z, r = o.r + e.radius * 0.6;
+    if (ox * ox + oz * oz < r * r) { blocked = true; break; }
+  }
+  if (blocked) { e.stuck = (e.stuck || 0) + dt; e.spd = 0; if (e.stuck > 1.2) { e.yaw += 1.4; e.stuck = 0; } }
+  else { e.pos.x = nx; e.pos.z = nz; e.stuck = 0; }
+  e.vel.set(-Math.sin(e.yaw) * e.spd, 0, -Math.cos(e.yaw) * e.spd);
+  const gy = terrainH(e.pos.x, e.pos.z), fx = -Math.sin(e.yaw) * 2.2, fz = -Math.cos(e.yaw) * 2.2;
+  e.group.position.set(e.pos.x, gy, e.pos.z); e.pos.y = gy + e.hOff;
+  e.group.rotation.set(Math.atan2(terrainH(e.pos.x + fx, e.pos.z + fz) - terrainH(e.pos.x - fx, e.pos.z - fz), 4.4), e.yaw, 0);
+}
+AI.tank = (e, dt) => {
+  const [tx, tz, sp] = vehicleNav(e, dt, [45, 80]);
+  drive(e, tx, tz, sp, dt);
+  const want = wrapAngle(yawTo(e.pos, drone.pos) - e.yaw - e.turret.rotation.y);
+  e.turret.rotation.y += clamp(want, -1.2 * dt, 1.2 * dt);
+  const hd = Math.hypot(drone.pos.x - e.pos.x, drone.pos.z - e.pos.z), elev = Math.atan2(drone.pos.y - e.pos.y - 0.5, hd);
+  e.gun.rotation.x += (clamp(elev, -0.08, 0.9) - e.gun.rotation.x) * (1 - Math.exp(-3 * dt));
+  e.recoil = Math.max(0, (e.recoil || 0) - dt * 3);
+  e.gun.position.z = -1.1 + e.recoil * 0.45;
+  e.cool -= dt;
+  if (canShoot() && e.hunt > 0 && e.cool <= 0 && Math.abs(want) < 0.1 && elev < 0.95 && e.pos.distanceTo(drone.pos) < 115) {
+    e.tip.getWorldPosition(_v3);
+    fireBolt(_v3, 46, 14, 1.0, 1.8, 0.85);
+    burst(_v3, 6, [0xffd27a, 0x8a8478], 5, 0.4, 1, 1);
+    audio.noiseHit(0.3, 900, 0.18 * clamp(1.4 - e.pos.distanceTo(drone.pos) / 100, 0.2, 1));
+    e.cool = rand(2.8, 3.8) * G.fireMul; e.recoil = 1;
+  }
+};
+AI.sam = (e, dt) => {
+  const [tx, tz, sp] = vehicleNav(e, dt, [80, 125]);
+  drive(e, tx, tz, sp, dt);
+  e.turret.rotation.y = angleLerp(e.turret.rotation.y, yawTo(e.pos, drone.pos) - e.yaw, 1 - Math.exp(-2 * dt));
+  e.cool -= dt;
+  if (canShoot() && e.hunt > 0 && e.pos.distanceTo(drone.pos) < 170 && e.cool <= 0) { e.salvo = 2; e.salvoT = 0; e.cool = rand(7, 9) * G.fireMul; }
+  if (e.salvo > 0) {
+    e.salvoT -= dt;
+    if (e.salvoT <= 0) {
+      e.salvo--; e.salvoT = 0.7;
+      const m = missiles.take();
+      e.tip.getWorldPosition(m.pos);
+      m.vel.set(drone.pos.x - m.pos.x, 0, drone.pos.z - m.pos.z).setLength(10); m.vel.y = 22;
+      m.life = 6; m.trail = 0;
+      burst(m.pos, 8, [0xe8e2d6, 0xffb627], 4, 0.6, 1, 2);
+      audio.rocket();
+      warnOnce('msl', 'Missile launch', 'warn', 3);
+    }
+  }
+};
 AI.pilot = (e, dt) => {
   const n = e.net; if (!n) return;
   const P = n.p, V = n.v;
@@ -1358,12 +1514,13 @@ const LEVELS = [
     id: 'sead', name: 'Silent Sky', place: 'Red Fork canyon · midday', map: 'canyon', par: 200, rockets: 12,
     brief: 'Four AA guns and a radar guard the canyon floor. Take them out so the strike package can come through. While the radar is up it keeps calling in scouts.',
     goals: ['Destroy 4 AA guns', 'Destroy the radar station'],
-    threats: 'AA guns fire fast flak bursts inside 130 m. Approach low behind rock cover. Scouts patrol.',
-    sites: [{ x: -95, z: -60 }, { x: 85, z: -90 }, { x: -30, z: 20 }, { x: 110, z: 10 }, { x: 0, z: -150 }],
+    threats: 'AA guns fire fast flak bursts inside 130 m. Approach low behind rock cover. Scouts patrol, and a missile truck roams the canyon floor.',
+    sites: [{ x: -95, z: -60 }, { x: 85, z: -90 }, { x: -30, z: 20 }, { x: 110, z: 10 }, { x: 0, z: -150 }, { x: 40, z: -110 }],
     setup() {
       L.sites.slice(0, 4).forEach((s) => spawnGround('aa', s.x, s.z, { obj: true, range: 130 }));
       const s = L.sites[4];
       spawnGround('radar', s.x, s.z, { obj: true, onDeath: () => toast('Radar down: no more reinforcements', 'ok') });
+      spawnGround('sam', L.sites[5].x, L.sites[5].z, { yaw: Math.PI });
       spawnAir('scout'); spawnAir('scout');
       S.reinfT = 22; S.ready = true;
     },
@@ -1377,16 +1534,39 @@ const LEVELS = [
     id: 'factory', name: 'Hangar Strike', place: 'Kessin works · dusk', map: 'dusk', par: 240, rockets: 14,
     brief: 'Three hangars at the Kessin works are launching drones against the front. Level them. Each hangar keeps launching scouts until it burns, and gunships guard the yard.',
     goals: ['Destroy 3 drone hangars'],
-    threats: 'Two gunships, scouts from the hangars, two AA guns at the yard edge.',
-    sites: [{ x: -90, z: -110 }, { x: 0, z: -145 }, { x: 90, z: -105 }, { x: -50, z: -60 }, { x: 55, z: -55 }],
+    threats: 'Two gunships, scouts from the hangars, two AA guns at the yard edge and two tanks patrolling the yard.',
+    sites: [{ x: -90, z: -110 }, { x: 0, z: -145 }, { x: 90, z: -105 }, { x: -50, z: -60 }, { x: 55, z: -55 }, { x: -30, z: -95 }, { x: 40, z: -90 }],
     setup() {
       L.sites.slice(0, 3).forEach((s) => spawnGround('hangar', s.x, s.z, { obj: true, spawnT: rand(4, 10) }));
-      L.sites.slice(3).forEach((s) => spawnGround('aa', s.x, s.z, { range: 120 }));
+      L.sites.slice(3, 5).forEach((s) => spawnGround('aa', s.x, s.z, { range: 120 }));
+      L.sites.slice(5).forEach((s) => spawnGround('tank', s.x, s.z, { yaw: Math.PI }));
       for (const s of [L.sites[0], L.sites[2]]) spawnAir('gunship', { at: new THREE.Vector3(s.x, terrainH(s.x, s.z) + 26, s.z + 20), extra: { guard: { x: s.x, z: s.z } } });
       spawnAir('scout'); spawnAir('scout');
       S.ready = true;
     },
     status: () => [['Hangars', `${3 - alive('hangar')} / 3`], ['Hostile drones', `${airCount()}`]],
+  },
+  {
+    id: 'armor', name: 'Armor Push', place: 'Sarn badlands · late afternoon', map: 'badlands', par: 260, rockets: 16,
+    brief: 'An armoured column is pushing south toward the FOB. Tanks will engage you on sight and missile trucks will try to knock you out of the sky. Stop the push before a tank reaches the base.',
+    goals: ['Destroy 6 tanks and 2 missile trucks', 'Do not let a tank reach the FOB'],
+    threats: 'Tanks fire heavy shells inside 115 m but cannot raise their guns past about 50°, so attack them from high above. Missile trucks launch homing missiles: turn hard, put a rock between you, or shoot the missile down. Scouts fly cover.',
+    setup() {
+      const wave = (t, list) => list.forEach(([k, x], j) => S.queue.push({ t: t + j * 2.5, fn: () =>
+        spawnGround(k, x, -172, { obj: true, yaw: Math.PI, goal: { x: x * 0.25, z: PAD.z - 8 } }) }));
+      wave(2, [['tank', -70], ['tank', 50], ['sam', -10]]);
+      wave(45, [['tank', -120], ['tank', -20], ['sam', 40], ['tank', 70], ['tank', 130]]);
+      S.queue.push({ t: 14, fn: () => spawnAir('scout') }, { t: 50, fn: () => spawnAir('scout') }, { t: 58, fn: () => spawnAir('scout') });
+    },
+    tick() {
+      for (const e of ents) if (e.kind === 'tank' && Math.hypot(e.pos.x - PAD.x, e.pos.z - PAD.z) < 32) { finish('overrun'); return; }
+    },
+    status: () => {
+      let near = Infinity;
+      for (const e of ents) if (e.kind === 'tank') near = Math.min(near, Math.hypot(e.pos.x - PAD.x, e.pos.z - PAD.z));
+      return [['Tanks', `${(S.spawned.tank || 0) - alive('tank')} / 6`], ['Missile trucks', `${(S.spawned.sam || 0) - alive('sam')} / 2`],
+        ['Nearest tank to base', near === Infinity ? '—' : `${Math.round(near)} m`, near < 90]];
+    },
   },
   {
     id: 'carrier', name: 'Night Carrier', place: 'Dren valley · 02:40', map: 'night', par: 300, rockets: 16, carrier: { x: 0, z: -40 },
@@ -1415,7 +1595,11 @@ const ARENA = {
   tick(dt) {   // practice bots fly only while nobody else is in the arena
     const bots = ents.filter((e) => e.bot);
     if (NET.pilots.size > 0) { for (const b of bots) { explode(b.pos, 0.6); removeEnt(b); } return; }
-    if (bots.length < 3) { S.botT -= dt; if (S.botT <= 0) { S.botT = 5; spawnAir('scout', { from: 'any', extra: { bot: true, score: 0, name: 'Practice bot' } }); } }
+    if (bots.filter((b) => b.air).length < 3) { S.botT -= dt; if (S.botT <= 0) { S.botT = 5; spawnAir('scout', { from: 'any', extra: { bot: true, score: 0, name: 'Practice bot' } }); } }
+    if (!bots.some((b) => b.kind === 'tank')) {
+      S.tankT = (S.tankT ?? 10) - dt;
+      if (S.tankT <= 0) { S.tankT = 15; const a = rand(0, 6.28); spawnGround('tank', Math.cos(a) * 110, Math.sin(a) * 110, { bot: true, score: 0, name: 'Practice tank', yaw: rand(0, 6.28) }); }
+    }
   },
   status: () => {
     const rows = NET.list.slice(0, 6).map((a) => [a.me ? `${a.name} (you)` : a.name, `${a.k} K · ${a.d} D`, false, a.me ? 'me' : '']);
@@ -1753,7 +1937,7 @@ function saveProgress() { try { localStorage.setItem('drone-front-progress', JSO
 const unlocked = (i) => i === 0 || (progress.stars[LEVELS[i - 1].id] || 0) > 0;
 
 // ---------- game state ----------
-const G = { state: 'menu', mode: 'campaign', alive: true, inv: 0, paused: false, rs: 0, firing: false, level: 0, t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: 0, refill: 0,
+const G = { incoming: 0, mBeep: 0, state: 'menu', mode: 'campaign', alive: true, inv: 0, paused: false, rs: 0, firing: false, level: 0, t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: 0, refill: 0,
   barrel: 0, shake: 0, hurtFlash: 0, bump: 0, lock: null, warned: {}, hq: 100, escaped: 0, fireMul: 1 };
 let L = LEVELS[0], S = { spawned: {} };
 
@@ -1827,6 +2011,7 @@ function finish(reason) {
     flat: ['Drone down', 'Battery flat in the field'],
     hq: ['Command post lost', 'The FOB has fallen'],
     convoy: ['Convoy through', `${G.escaped} vehicles reached the ridge`],
+    overrun: ['FOB overrun', 'A tank reached the base'],
   };
   const [eyebrow, title] = won ? ['Sortie complete', L.name] : fails[reason];
   $('endEyebrow').textContent = eyebrow; $('endTitle').textContent = title;
@@ -1837,6 +2022,7 @@ function finish(reason) {
     : reason === 'down' ? 'Use cover, keep moving, and land on the pad to repair when the hull gets low.'
     : reason === 'flat' ? 'The battery drains faster when you climb. Land on the pad to recharge before it runs out.'
     : reason === 'hq' ? 'Most kamikazes dive straight at the command post. Meet them north of the base, not over it.'
+    : reason === 'overrun' ? 'Tanks cannot aim higher than about 50°. Hover high above the lead tanks and hit them with rockets before they get close.'
     : 'A rocket kills a truck in one hit. Get ahead of the convoy and hit the lead vehicles first.';
   $('eKills').textContent = G.kills; $('eTime').textContent = fmtTime(G.t); $('eScore').textContent = G.score.toLocaleString();
   $('bestEnd').textContent = progress.best[L.id] ? `Best ${progress.best[L.id].toLocaleString()}` : '';
@@ -2050,9 +2236,11 @@ function setChip(text, kind) {
 }
 function updateChip() {
   const d = drone, extra = L.chip?.();
+  const MSL = 'Missile inbound: break hard or shoot it down';
   if (G.mode === 'arena') {
     const others = NET.pilots.size;
     if (!G.alive) setChip('Downed', 'warn');
+    else if (G.incoming) setChip(MSL, 'warn');
     else if (G.inv > 0) setChip('Spawn shield on', 'ok');
     else if (G.overheated) setChip('Gun overheated: cooling down', 'warn');
     else if (G.lock) setChip(`Locked: ${G.lock.name} · ${Math.round(G.lock.pos.distanceTo(d.pos))} m`, G.lock.kind === 'pilot' ? 'amber' : 'ok');
@@ -2060,6 +2248,7 @@ function updateChip() {
     return;
   }
   if (!d.powered) setChip('Motors off', 'warn');
+  else if (G.incoming) setChip(MSL, 'warn');
   else if (G.overheated) setChip('Gun overheated: cooling down', 'warn');
   else if (!d.airborne && d.charging && (G.battery < 99.5 || G.hull < 99.5 || G.rockets < L.rockets)) setChip(`Rearming · hull ${Math.round(G.hull)}% · battery ${Math.round(G.battery)}% · rockets ${G.rockets}`, 'amber');
   else if (!d.airborne) setChip(isTouch ? 'Push the right stick up to take off' : 'Hold Space to take off', 'amber');
@@ -2119,6 +2308,8 @@ function drawMap() {
     else mctx.rect(x - r * 0.85, y - r * 0.85, r * 1.7, r * 1.7);
     mctx.fill();
   }
+  mctx.fillStyle = '#ffffff';
+  for (const m of missiles.items) if (m.on) mctx.fillRect(P(m.pos.x) - dot * 0.5, P(m.pos.z) - dot * 0.5, dot, dot);
   const d = drone;
   mctx.save(); mctx.translate(P(d.pos.x), P(d.pos.z)); mctx.rotate(-d.yaw);
   const s = W / 30;
