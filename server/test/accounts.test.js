@@ -131,4 +131,7 @@ test('the server serves the game page and its info', async () => {
   assert.equal(info.game, 'drone-front'); assert.equal(info.price, '$5'); assert.equal(info.checkout, true);
   const page = await (await fetch(base + '/')).text();
   assert.match(page, /<title>Drone Front<\/title>/);
+  const gen = await fetch(base + '/worldgen.js');
+  assert.match(gen.headers.get('content-type'), /javascript/);
+  assert.match(await gen.text(), /export function height/);
 });

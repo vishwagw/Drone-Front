@@ -26,10 +26,11 @@
    Checkout with webhook unlock and refunds, free demo, Fly.io config for Chicago.
    Still to do here: password reset and email verification (needs an email provider
    such as Postmark or Resend), callsign rules and player reporting.
-3. **A real open world:** a map several kilometres across streamed in chunks,
-   zones with different terrain, server-run AI (patrols, convoys, bases to capture),
-   world events, and interest management so each pilot only gets updates for what
-   is near them.
+3. **A real open world:** the streamed map is done: 4 km across in 320 m chunks
+   with two detail levels, biomes, towns, 16 outposts, a radar minimap and
+   interest management (updates only for pilots within 1.5 km). Still to do:
+   server-run AI (patrols, convoys, bases to capture) and world events, so the
+   world has things to fight when few pilots are online.
 4. **Progression and economy:** drone classes and upgrades bought with credits,
    cosmetics, daily missions, squads and chat.
 5. **Server-side hit simulation:** the server re-checks line of sight and aim for

@@ -1,16 +1,17 @@
 // One persistent shared world. The server is the authority for hull, deaths, kills, ammo and
 // pilot stats; clients send their own flight state and claim hits, and every claim is checked
-// (rate, range, ammo, target state) before it is applied.
+// (rate, range, ammo, target state) before it is applied. The map is the generated open world.
+import * as WG from './worldgen.js';
 
 export const RULES = {
-  maxPlayersPerWorld: 32,
-  snapshotHz: 15,
-  bounds: 188, ceiling: 120,
+  maxPlayersPerWorld: 64,
+  snapshotHz: 15, viewRange: 1500,
+  bounds: WG.HALF - 30, ceiling: 600,
   maxSpeed: 30, moveSlack: 8, spawnGrace: 1500,
   hull: 100, respawnMs: 4000, shieldMs: 2500,
   gunDamage: 3.5, gunRate: 12, gunBurst: 14, gunRange: 220,
   rocketDamage: 38, rocketAmmo: 6, rocketRegenMs: 8000, rocketRange: 260, rocketWindowMs: 5000,
-  pad: { x: 0, z: 0, r: 5, maxY: 2.5 }, padHealPerSec: 12, padRearmMs: 1200,
+  padRadius: 5, padMaxY: 2.5, padHealPerSec: 12, padRearmMs: 1200,
   selfDamageMax: 50, killCredit: 10, killXp: 100,
   msgPerSec: 60, maxMessage: 4096,
 };
@@ -30,15 +31,18 @@ export class World {
   }
   get full() { return this.players.size >= this.R.maxPlayersPerWorld; }
 
+  // Spawn beside an outpost: usually one with pilots within a few kilometres but nobody on top of it.
   spawnPoint() {
-    let best = null, bd = -1;
-    for (let k = 0; k < 12; k++) {
-      const a = Math.random() * Math.PI * 2, p = [Math.cos(a) * 125, 30, Math.sin(a) * 125];
+    let best = null, bs = -Infinity;
+    for (const o of WG.OUTPOSTS) {
       let near = 1e9;
-      for (const o of this.players.values()) if (o.al) near = Math.min(near, Math.hypot(o.p[0] - p[0], o.p[2] - p[2]));
-      if (near > bd) { bd = near; best = p; }
+      for (const p of this.players.values()) if (p.al) near = Math.min(near, Math.hypot(p.p[0] - o.x, p.p[2] - o.z));
+      const s = (near === 1e9 ? 0 : -Math.abs(near - 600)) + Math.random() * 150;   // close enough to find a fight, not on top of one
+      if (s > bs) { bs = s; best = o; }
     }
-    return best;
+    const a = Math.random() * Math.PI * 2, r = 30 + Math.random() * 30;
+    const x = best.x + Math.cos(a) * r, z = best.z + Math.sin(a) * r;
+    return [x, WG.height(x, z) + 30, z];
   }
 
   join(send, account, color) {
@@ -140,17 +144,18 @@ export class World {
     for (const pl of this.players.values()) {
       if (!pl.al) { if (t >= pl.respawnAt) this.spawn(pl); continue; }
       if (t - pl.regenAt >= this.R.rocketRegenMs) { pl.regenAt = t; pl.ammo = Math.min(this.R.rocketAmmo, pl.ammo + 1); }
-      const P = this.R.pad;
-      if (Math.hypot(pl.p[0] - P.x, pl.p[2] - P.z) < P.r && pl.p[1] < P.maxY) {   // landed on the pad: repair and rearm
+      const pad = WG.padAt(pl.p[0], pl.p[2], this.R.padRadius);
+      if (pad && pl.p[1] < pad.y + this.R.padMaxY) {   // landed on an outpost pad: repair and rearm
         pl.h = Math.min(this.R.hull, pl.h + this.R.padHealPerSec / this.R.snapshotHz);
         if (t >= pl.rearmAt && pl.ammo < this.R.rocketAmmo) { pl.ammo++; pl.rearmAt = t + this.R.padRearmMs; }
       }
     }
     const view = [...this.players.values()].map((o) => ({ id: o.id, n: o.name, c: o.c, p: o.p, v: o.v, y: o.y, a: o.a,
       f: o.f, rs: o.rs, lk: o.lk, h: Math.round(o.h), al: o.al ? 1 : 0, iv: o.shieldUntil > t ? 1 : 0 }));
-    for (const pl of this.players.values()) {
+    const range = this.R.viewRange;
+    for (const pl of this.players.values()) {   // each pilot hears only about pilots within view range
       pl.send({ t: 'snap', me: { h: Math.round(pl.h * 10) / 10, al: pl.al ? 1 : 0, iv: pl.shieldUntil > t ? 1 : 0, rk: pl.ammo },
-        pl: view.filter((o) => o.id !== pl.id) });
+        pl: view.filter((o) => o.id !== pl.id && Math.abs(o.p[0] - pl.p[0]) < range && Math.abs(o.p[2] - pl.p[2]) < range) });
     }
   }
 

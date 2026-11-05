@@ -414,6 +414,8 @@ const MAPS = {
     sun: 0xfff0dc, sunI: 2.3, hemi: [0xe6eef6, 0x55524a, 1.35], sunDir: [70, 100, 50], scatter: [['building', 64, 0x9a958a], ['ruin', 44, 0x88837a], ['tree', 16]] },
   badlands: { seed: 83, amp: 2.0, rim: 18, low: 0xa88f68, high: 0x8a7350, peak: 0xc4a87e, road: 0x6e5a42, sky: 0xdcc6a4, fog: [150, 410],
     sun: 0xffdcb0, sunI: 2.4, hemi: [0xfff0dc, 0x7a6040, 1.35], sunDir: [-90, 60, 50], scatter: [['rock', 64, 0x9c7a52], ['tree', 12]] },
+  open: { seed: 1, amp: 0, rim: 0, low: 0x86a852, high: 0x6f9a48, peak: 0x8a8378, road: 0x8a7a5a, sky: 0xbcd2de, fog: [380, 1050],
+    sun: 0xfff0d8, sunI: 2.5, hemi: [0xe4f0ff, 0x5d6440, 1.45], sunDir: [80, 120, 40], scatter: [] },
   night: { seed: 59, amp: 1.6, rim: 12, low: 0x4c5a48, high: 0x3e4a3e, peak: 0x5a6656, road: 0x3a3833, sky: 0x18213a, fog: [100, 320],
     sun: 0xa8bcff, sunI: 1.0, hemi: [0x6f86c8, 0x1c2218, 0.75], sunDir: [-60, 120, -40], scatter: [['ruin', 34, 0x777a80], ['tree', 26]] },
 };
@@ -429,7 +431,9 @@ function roadDist(x, z) {
   }
   return Math.sqrt(best);
 }
+let OW = null, OPEN = false, CHUNKS = null;   // open-world generator module, whether it drives the map, chunk streamer
 function terrainH(x, z) {
+  if (OPEN) return OW.height(x, z);
   const n = M.amp * (2.4 * Math.sin(x * 0.017 + PH[0]) * Math.cos(z * 0.02 + PH[1])
         + 1.3 * Math.sin(x * 0.043 + PH[2]) * Math.sin(z * 0.037 + PH[3])
         + 0.45 * Math.sin((x - z) * 0.08 + PH[4]));
@@ -437,8 +441,11 @@ function terrainH(x, z) {
   if (ROAD) f = Math.min(f, smooth(3.5, 11, roadDist(x, z)));
   return n * f + M.rim * smooth(140, 196, Math.hypot(x, z));
 }
-const onPad = (x, z) => Math.hypot(x - PAD.x, z - PAD.z) < 5;
-const groundAt = (x, z) => (onPad(x, z) ? 0.3 : terrainH(x, z));
+const onPad = (x, z) => (OPEN ? !!OW.padAt(x, z) : Math.hypot(x - PAD.x, z - PAD.z) < 5);
+function groundAt(x, z) {
+  if (OPEN) { const pad = OW.padAt(x, z); return pad ? pad.y + 0.3 : Math.max(OW.height(x, z), OW.WATER); }
+  return onPad(x, z) ? 0.3 : terrainH(x, z);
+}
 
 function segHit(ax, ay, az, bx, by, bz, c, r) {
   const dx = bx - ax, dy = by - ay, dz = bz - az, l2 = dx * dx + dy * dy + dz * dz || 1e-6;
@@ -468,7 +475,24 @@ const SUN_OFFSET = new THREE.Vector3();
 
 // ---------- world (rebuilt per sortie) ----------
 let world = null;
-const obstacles = [];   // {x, z, r, top, base}
+// Obstacles ({x, z, r, top, base}) live in a 32 m grid so collision checks only look at nearby cells.
+const OBS_CELL = 32, obsGrid = new Map();
+const obsKey = (x, z) => Math.floor(x / OBS_CELL) * 65536 + Math.floor(z / OBS_CELL);
+function addObstacle(o) {
+  const k = obsKey(o.x, o.z);
+  let cell = obsGrid.get(k);
+  if (!cell) obsGrid.set(k, (cell = []));
+  cell.push(o);
+  return o;
+}
+function removeObstacles(list) {
+  for (const o of list) { const cell = obsGrid.get(obsKey(o.x, o.z)); const i = cell ? cell.indexOf(o) : -1; if (i >= 0) cell.splice(i, 1); }
+}
+function obsNear(x, z) {
+  const ci = Math.floor(x / OBS_CELL), cj = Math.floor(z / OBS_CELL), out = [];
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const cell = obsGrid.get((ci + a) * 65536 + cj + b); if (cell) for (const o of cell) out.push(o); }
+  return out;
+}
 const mapMarks = [];    // {x, z, r, kind} for the minimap
 function disposeTree(o) {
   o.traverse((c) => {
@@ -480,13 +504,20 @@ function disposeTree(o) {
 function buildWorld(L) {
   if (world) { scene.remove(world); disposeTree(world); }
   world = new THREE.Group(); scene.add(world);
-  obstacles.length = 0; mapMarks.length = 0;
+  obsGrid.clear(); mapMarks.length = 0; CHUNKS = null;
   const rng = mulberry32(M.seed);
   PH = [0, 1, 2, 3, 4].map(() => rng() * 6.28);
 
   scene.background.setHex(M.sky); scene.fog.color.setHex(M.sky); scene.fog.near = M.fog[0]; scene.fog.far = M.fog[1];
   hemi.color.setHex(M.hemi[0]); hemi.groundColor.setHex(M.hemi[1]); hemi.intensity = M.hemi[2];
   sun.color.setHex(M.sun); sun.intensity = M.sunI; SUN_OFFSET.set(...M.sunDir);
+  camera.far = L.open ? 1500 : 900; camera.updateProjectionMatrix();
+  if (L.open) {   // the open world streams its terrain in chunks; only the outposts are built up front
+    for (const o of OW.OUTPOSTS) addFOB(world, o.x, o.y, o.z, false, 24);
+    CHUNKS = new ChunkWorld(world);
+    treeLayer = null;
+    return;
+  }
 
   // terrain
   const geo = new THREE.PlaneGeometry(HALF * 2, HALF * 2, 200, 200);
@@ -536,7 +567,7 @@ function buildWorld(L) {
         q.setFromAxisAngle(UP, rng() * 6.28);
         m4.compose(p.set(t.x, t.y + 6.6 * t.s, t.z), q, sc.set(2.8 * t.s, 3.2 * t.s, 2.8 * t.s)); canopy.setMatrixAt(i, m4);
         col.setHSL(0.24 + rng() * 0.06, 0.28 + rng() * 0.12, (M === MAPS.night ? 0.16 : 0.3) + rng() * 0.08); canopy.setColorAt(i, col);
-        obstacles.push({ x: t.x, z: t.z, r: 2.8 * t.s * 0.85, top: t.y + 6.6 * t.s + 3.2 * t.s * 0.85, base: t.y });
+        addObstacle({ x: t.x, z: t.z, r: 2.8 * t.s * 0.85, top: t.y + 6.6 * t.s + 3.2 * t.s * 0.85, base: t.y });
         mapMarks.push({ x: t.x, z: t.z, r: 2.4 * t.s, kind: 'tree' });
       });
       world.add(trunk, canopy);
@@ -555,43 +586,14 @@ function buildWorld(L) {
         m4.compose(p.set(t.x, y, t.z), q, sc.set(w, h, d)); mesh.setMatrixAt(i, m4);
         col.setHex(tint).offsetHSL(0, 0, (rng() - 0.5) * 0.12); mesh.setColorAt(i, col);
         const r = Math.max(w, d) * (kind === 'rock' ? 0.85 : 0.62);
-        obstacles.push({ x: t.x, z: t.z, r, top: y + h * (kind === 'rock' ? 0.85 : 1), base: t.y });
+        addObstacle({ x: t.x, z: t.z, r, top: y + h * (kind === 'rock' ? 0.85 : 1), base: t.y });
         mapMarks.push({ x: t.x, z: t.z, r, kind });
       });
       world.add(mesh);
     }
   }
 
-  // forward operating base: pad, sandbags, tents, beacon mast
-  {
-    const pad = new THREE.Mesh(new THREE.CylinderGeometry(5, 5.2, 0.3, 40), new THREE.MeshLambertMaterial({ color: 0x3b4245 }));
-    pad.position.set(PAD.x, 0.15, PAD.z); pad.receiveShadow = true;
-    const yellow = new THREE.MeshBasicMaterial({ color: 0xffb627 });
-    const bar = (w, d, x, z) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), yellow); b.position.set(PAD.x + x, 0.31, PAD.z + z); world.add(b); };
-    bar(0.5, 3.4, -1.1, 0); bar(0.5, 3.4, 1.1, 0); bar(1.7, 0.5, 0, 0);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(4.2, 4.5, 48), yellow);
-    ring.rotation.x = -Math.PI / 2; ring.position.set(PAD.x, 0.31, PAD.z);
-    const bags = new THREE.InstancedMesh(new THREE.BoxGeometry(1.1, 0.45, 0.6), new THREE.MeshLambertMaterial({ color: 0xb3a27a }), 72);
-    for (let i = 0; i < 72; i++) {
-      const a = ((i % 36) / 36) * Math.PI * 2, layer = i < 36 ? 0 : 1;
-      if (Math.abs(Math.sin(a / 2)) < 0.14) { bags.setMatrixAt(i, HIDE); continue; }   // gap facing the front
-      m4.compose(p.set(PAD.x + Math.sin(a) * 11, 0.22 + layer * 0.44, PAD.z - Math.cos(a) * 11), q.setFromAxisAngle(UP, -a), sc.set(1, 1, 1));
-      bags.setMatrixAt(i, m4);
-    }
-    const tentM = new THREE.MeshLambertMaterial({ color: 0x6b6a48, flatShading: true });
-    for (const [x, z] of [[16, 8], [18, -4]]) {
-      const tent = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 6, 3), tentM);
-      tent.rotation.set(0, 0, Math.PI / 2); tent.scale.set(0.7, 1, 1); tent.position.set(PAD.x + x, 1.2, PAD.z + z);
-      tent.castShadow = true; world.add(tent);
-      obstacles.push({ x: PAD.x + x, z: PAD.z + z, r: 3.2, top: 2.6, base: 0 });
-    }
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 9, 6), new THREE.MeshLambertMaterial({ color: 0x8a8a8a }));
-    mast.position.set(PAD.x - 9, 4.5, PAD.z + 6);
-    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), new THREE.MeshBasicMaterial({ color: 0x7fe0a0 }));
-    beacon.position.set(PAD.x - 9, 9.1, PAD.z + 6);
-    world.add(pad, ring, bags, mast, beacon);
-    obstacles.push({ x: PAD.x - 9, z: PAD.z + 6, r: 0.6, top: 9.3, base: 0 });
-  }
+  addFOB(world, PAD.x, 0, PAD.z, true, 9);
 
   // command post (defended in Hold the Line)
   if (L.hq) {
@@ -604,9 +606,179 @@ function buildWorld(L) {
     body.castShadow = roof.castShadow = true;
     g.add(body, roof, dish, ant); g.position.set(HQ.x, terrainH(HQ.x, HQ.z), HQ.z);
     world.add(g);
-    obstacles.push({ x: HQ.x, z: HQ.z, r: 7, top: g.position.y + 5.5, base: 0 });
+    addObstacle({ x: HQ.x, z: HQ.z, r: 7, top: g.position.y + 5.5, base: 0 });
   }
   treeLayer = null;
+}
+
+// Landing pad with sandbag ring, a beacon mast and (for the campaign base) tents. y is the pad's ground height.
+function addFOB(parent, X, Y, Z, tents, mastH) {
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(5, 5.2, 0.3, 40), new THREE.MeshLambertMaterial({ color: 0x3b4245 }));
+  pad.position.set(X, Y + 0.15, Z); pad.receiveShadow = true;
+  const yellow = new THREE.MeshBasicMaterial({ color: 0xffb627 });
+  const bar = (w, d, x, z) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), yellow); b.position.set(X + x, Y + 0.31, Z + z); parent.add(b); };
+  bar(0.5, 3.4, -1.1, 0); bar(0.5, 3.4, 1.1, 0); bar(1.7, 0.5, 0, 0);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(4.2, 4.5, 48), yellow);
+  ring.rotation.x = -Math.PI / 2; ring.position.set(X, Y + 0.31, Z);
+  const bags = new THREE.InstancedMesh(new THREE.BoxGeometry(1.1, 0.45, 0.6), new THREE.MeshLambertMaterial({ color: 0xb3a27a }), 72);
+  for (let i = 0; i < 72; i++) {
+    const a = ((i % 36) / 36) * Math.PI * 2, layer = i < 36 ? 0 : 1;
+    if (Math.abs(Math.sin(a / 2)) < 0.14) { bags.setMatrixAt(i, HIDE); continue; }   // gap facing the front
+    m4.compose(p.set(X + Math.sin(a) * 11, Y + 0.22 + layer * 0.44, Z - Math.cos(a) * 11), q.setFromAxisAngle(UP, -a), sc.set(1, 1, 1));
+    bags.setMatrixAt(i, m4);
+  }
+  if (tents) {
+    const tentM = new THREE.MeshLambertMaterial({ color: 0x6b6a48, flatShading: true });
+    for (const [x, z] of [[16, 8], [18, -4]]) {
+      const tent = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 6, 3), tentM);
+      tent.rotation.set(0, 0, Math.PI / 2); tent.scale.set(0.7, 1, 1); tent.position.set(X + x, Y + 1.2, Z + z);
+      tent.castShadow = true; parent.add(tent);
+      addObstacle({ x: X + x, z: Z + z, r: 3.2, top: Y + 2.6, base: Y });
+    }
+  }
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, mastH, 6), new THREE.MeshLambertMaterial({ color: 0x8a8a8a }));
+  mast.position.set(X - 9, Y + mastH / 2, Z + 6);
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(mastH > 12 ? 0.6 : 0.25, 10, 8), new THREE.MeshBasicMaterial({ color: 0x7fe0a0 }));
+  beacon.position.set(X - 9, Y + mastH + 0.1, Z + 6);
+  parent.add(pad, ring, bags, mast, beacon);
+  addObstacle({ x: X - 9, z: Z + 6, r: 0.6, top: Y + mastH + 0.3, base: Y });
+}
+
+// ---------- open world: streamed terrain chunks ----------
+const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const waterMat = new THREE.MeshLambertMaterial({ color: 0x3f7f96, transparent: true, opacity: 0.86 });
+const SCN = {
+  trunk: new THREE.CylinderGeometry(0.22, 0.42, 1, 6), crown: new THREE.IcosahedronGeometry(1, 0), rock: new THREE.IcosahedronGeometry(1, 0),
+  box: new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
+  trunkM: new THREE.MeshLambertMaterial({ color: 0xcfc6b2 }), flatM: new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }),
+};
+const TC = { dry: new THREE.Color(0xcdb27a), grass: new THREE.Color(0x86a852), forest: new THREE.Color(0x4c7637), sand: new THREE.Color(0xd8c992),
+  bed: new THREE.Color(0x6f6a55), rock: new THREE.Color(0x8a8378), snow: new THREE.Color(0xeef2f4) };
+function terrainColor(x, z, h, ny, out) {
+  const m = OW.moisture(x, z);
+  out.copy(TC.dry).lerp(TC.grass, smooth(0.3, 0.45, m)).lerp(TC.forest, smooth(0.5, 0.66, m));
+  out.lerp(TC.rock, Math.max(smooth(55, 80, h), smooth(0.86, 0.66, ny)));
+  out.lerp(TC.snow, smooth(108, 124, h) * smooth(0.6, 0.8, ny));
+  if (h < OW.WATER + 2.5) out.lerp(h < OW.WATER - 0.5 ? TC.bed : TC.sand, smooth(OW.WATER + 2.5, OW.WATER + 0.5, h));
+  return out;
+}
+// One chunk of terrain at `seg` quads per side, with analytic normals and a skirt that hides seams
+// between chunks drawn at different detail levels.
+function chunkGeometry(ci, cj, seg) {
+  const C = OW.CHUNK, n = seg + 1, step = C / seg, x0 = ci * C, z0 = cj * C, m = n + 2;
+  const H = new Float32Array(m * m);
+  for (let r = 0; r < m; r++) for (let c = 0; c < m; c++) H[r * m + c] = OW.height(x0 + (c - 1) * step, z0 + (r - 1) * step);
+  const per = 4 * seg, count = n * n + per;
+  const pos = new Float32Array(count * 3), nor = new Float32Array(count * 3), col = new Float32Array(count * 3), cc = new THREE.Color();
+  let minH = Infinity;
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const h = H[(r + 1) * m + c + 1], i = (r * n + c) * 3, x = x0 + c * step, z = z0 + r * step;
+    const nx = H[(r + 1) * m + c] - H[(r + 1) * m + c + 2], nz = H[r * m + c + 1] - H[(r + 2) * m + c + 1], ny = 2 * step, len = Math.hypot(nx, ny, nz);
+    pos[i] = x; pos[i + 1] = h; pos[i + 2] = z;
+    nor[i] = nx / len; nor[i + 1] = ny / len; nor[i + 2] = nz / len;
+    terrainColor(x, z, h, ny / len, cc); col[i] = cc.r; col[i + 1] = cc.g; col[i + 2] = cc.b;
+    if (h < minH) minH = h;
+  }
+  const idx = [];
+  for (let r = 0; r < seg; r++) for (let c = 0; c < seg; c++) { const a = r * n + c, b = a + 1, d = a + n, e = d + 1; idx.push(a, d, b, b, d, e); }
+  const perim = [];
+  for (let c = 0; c < seg; c++) perim.push(c);
+  for (let r = 0; r < seg; r++) perim.push(r * n + seg);
+  for (let c = seg; c > 0; c--) perim.push(seg * n + c);
+  for (let r = seg; r > 0; r--) perim.push(r * n);
+  perim.forEach((v, k) => {
+    const sv = n * n + k;
+    for (let a = 0; a < 3; a++) { pos[sv * 3 + a] = pos[v * 3 + a]; nor[sv * 3 + a] = nor[v * 3 + a]; col[sv * 3 + a] = col[v * 3 + a]; }
+    pos[sv * 3 + 1] -= 30;
+    const v2 = perim[(k + 1) % per], s2 = n * n + (k + 1) % per;
+    idx.push(v, sv, v2, v2, sv, s2);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeBoundingSphere();
+  return { geo, minH };
+}
+// Trees, rocks, buildings and ruins for one chunk, as instanced meshes plus collision obstacles.
+function chunkDetail(ci, cj) {
+  const items = OW.chunkItems(ci, cj), meshes = [], obs = [];
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), tilt = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
+  const XAX = new THREE.Vector3(1, 0, 0);
+  const of = (k) => items.filter((t) => t.k === k);
+  const trees = of('tree');
+  if (trees.length) {
+    const trunk = new THREE.InstancedMesh(SCN.trunk, SCN.trunkM, trees.length), crown = new THREE.InstancedMesh(SCN.crown, SCN.flatM, trees.length);
+    trunk.castShadow = crown.castShadow = true;
+    trees.forEach((t, i) => {
+      m4.compose(p.set(t.x, t.y + 3 * t.s, t.z), q.identity(), sc.set(t.s, 6 * t.s, t.s)); trunk.setMatrixAt(i, m4);
+      q.setFromAxisAngle(UP, t.rot);
+      m4.compose(p.set(t.x, t.y + 6.6 * t.s, t.z), q, sc.set(2.8 * t.s, 3.2 * t.s, 2.8 * t.s)); crown.setMatrixAt(i, m4);
+      crown.setColorAt(i, col.setHSL(0.24 + t.tint * 0.07, 0.3 + t.tint * 0.1, 0.27 + t.tint * 0.08));
+      obs.push(addObstacle({ x: t.x, z: t.z, r: 2.8 * t.s * 0.85, top: t.y + 6.6 * t.s + 3.2 * t.s * 0.85, base: t.y }));
+    });
+    meshes.push(trunk, crown);
+  }
+  for (const k of ['rock', 'building', 'ruin']) {
+    const list = of(k);
+    if (!list.length) continue;
+    const mesh = new THREE.InstancedMesh(k === 'rock' ? SCN.rock : SCN.box, SCN.flatM, list.length);
+    mesh.castShadow = mesh.receiveShadow = true;
+    list.forEach((t, i) => {
+      const y = k === 'rock' ? t.y : t.y - 0.5;
+      q.setFromAxisAngle(UP, t.rot);
+      if (k === 'ruin') q.multiply(tilt.setFromAxisAngle(XAX, (t.w % 1 - 0.5) * 0.25));
+      m4.compose(p.set(t.x, y, t.z), q, sc.set(t.w, t.hgt, t.d)); mesh.setMatrixAt(i, m4);
+      col.setHex(k === 'building' ? 0x9a958a : k === 'ruin' ? 0x88837a : t.bio === OW.BIOME.DESERT ? 0xb88d5c : t.bio === OW.BIOME.SNOW ? 0xdfe4e8 : 0x8a8378)
+        .offsetHSL(0, 0, ((t.d * 7.3) % 1 - 0.5) * 0.12);
+      mesh.setColorAt(i, col);
+      const r = Math.max(t.w, t.d) * (k === 'rock' ? 0.85 : 0.62);
+      obs.push(addObstacle({ x: t.x, z: t.z, r, top: y + t.hgt * (k === 'rock' ? 0.85 : 1), base: t.y }));
+    });
+    meshes.push(mesh);
+  }
+  return { meshes, obs };
+}
+class ChunkWorld {
+  constructor(parent) { this.parent = parent; this.chunks = new Map(); this.waterGeo = new THREE.PlaneGeometry(OW.CHUNK, OW.CHUNK).rotateX(-Math.PI / 2); }
+  // Keep a 7x7 block of chunks around (px, pz): full detail and scenery close by, coarse terrain further out.
+  update(px, pz, budget) {
+    const C = OW.CHUNK, ci = Math.floor(px / C), cj = Math.floor(pz / C), R = 3, lim = Math.ceil(OW.HALF / C);
+    const want = new Map();
+    for (let di = -R; di <= R; di++) for (let dj = -R; dj <= R; dj++) {
+      const i = ci + di, j = cj + dj, d = Math.max(Math.abs(di), Math.abs(dj));
+      if (i < -lim || i >= lim || j < -lim || j >= lim) continue;
+      want.set(i * 1000 + j, { i, j, seg: d <= 1 ? 64 : 20, detail: d <= 2, d2: di * di + dj * dj });
+    }
+    for (const [k, c] of this.chunks) if (!want.has(k)) { this.drop(c); this.chunks.delete(k); }
+    const todo = [];
+    for (const [k, w] of want) { const c = this.chunks.get(k); if (!c || c.seg !== w.seg || c.detail !== w.detail) todo.push([k, w]); }
+    todo.sort((a, b) => a[1].d2 - b[1].d2);
+    for (const [k, w] of todo.slice(0, budget)) this.build(k, w);
+    return todo.length;
+  }
+  build(k, w) {
+    let c = this.chunks.get(k);
+    if (!c) { c = { group: new THREE.Group(), seg: 0, detail: false, terrain: null, water: null, meshes: [], obs: [] }; this.parent.add(c.group); this.chunks.set(k, c); }
+    if (c.seg !== w.seg) {
+      if (c.terrain) { c.group.remove(c.terrain); c.terrain.geometry.dispose(); }
+      const { geo, minH } = chunkGeometry(w.i, w.j, w.seg);
+      c.terrain = new THREE.Mesh(geo, terrainMat); c.terrain.receiveShadow = true; c.group.add(c.terrain); c.seg = w.seg;
+      if (minH < OW.WATER && !c.water) {
+        c.water = new THREE.Mesh(this.waterGeo, waterMat);
+        c.water.position.set((w.i + 0.5) * OW.CHUNK, OW.WATER, (w.j + 0.5) * OW.CHUNK); c.group.add(c.water);
+      }
+    }
+    if (c.detail !== w.detail) {
+      if (w.detail) { const d = chunkDetail(w.i, w.j); c.meshes = d.meshes; c.obs = d.obs; if (d.meshes.length) c.group.add(...d.meshes); }
+      else this.dropDetail(c);
+      c.detail = w.detail;
+    }
+  }
+  dropDetail(c) { for (const m of c.meshes) { c.group.remove(m); m.dispose(); } removeObstacles(c.obs); c.meshes = []; c.obs = []; }
+  drop(c) { this.dropDetail(c); c.terrain?.geometry.dispose(); this.parent.remove(c.group); }
 }
 
 // ---------- quadcopter builder ----------
@@ -872,8 +1044,8 @@ function spawnGround(kind, x, z, extra = {}) {
     home: { x, z }, spd: 0, speed: kind === 'tank' ? 4.2 : kind === 'sam' ? 4.6 : undefined, ...extra });
   if (kind === 'tank' || kind === 'sam') e.group.rotation.order = 'YXZ';
   e.group.rotation.y = e.yaw;
-  if (kind === 'hangar') { e.obstacle = { x, z, r: 12, top: gy + 10.5, base: gy }; obstacles.push(e.obstacle); }
-  if (kind === 'radar') { e.obstacle = { x, z, r: 2.4, top: gy + 7, base: gy }; obstacles.push(e.obstacle); }
+  if (kind === 'hangar') { e.obstacle = { x, z, r: 12, top: gy + 10.5, base: gy }; addObstacle(e.obstacle); }
+  if (kind === 'radar') { e.obstacle = { x, z, r: 2.4, top: gy + 7, base: gy }; addObstacle(e.obstacle); }
   return e;
 }
 
@@ -944,7 +1116,7 @@ function updateEffects(dt) {
       }
     }
     if (!dead && b.pos.y < groundAt(b.pos.x, b.pos.z)) { burst(b.pos, 4, [M.road, M.low], 4, 0.5, 0.7, 2); dead = true; }
-    if (!dead) for (const o of obstacles) {
+    if (!dead) for (const o of obsNear(b.pos.x, b.pos.z)) {
       const ox = b.pos.x - o.x, oz = b.pos.z - o.z;
       if (ox * ox + oz * oz < o.r * o.r * 0.7 && b.pos.y < o.top && b.pos.y > o.base + 1) { burst(b.pos, 4, [0x777066, 0x4e6b35], 4, 0.5, 0.7, 1); dead = true; break; }
     }
@@ -969,7 +1141,7 @@ function updateEffects(dt) {
     let hit = r.life <= 0 || r.pos.y < groundAt(r.pos.x, r.pos.z);
     if (!hit) for (const e of ents) if (e !== r.owner && segHit(ax, ay, az, r.pos.x, r.pos.y, r.pos.z, e.pos, e.radius + 0.6)) { hit = true; break; }
     if (!hit && r.vis && r.target === ME && G.alive && segHit(ax, ay, az, r.pos.x, r.pos.y, r.pos.z, drone.pos, 1.6)) hit = true;
-    if (!hit) for (const o of obstacles) {
+    if (!hit) for (const o of obsNear(r.pos.x, r.pos.z)) {
       const ox = r.pos.x - o.x, oz = r.pos.z - o.z;
       if (ox * ox + oz * oz < o.r * o.r * 0.7 && r.pos.y < o.top && r.pos.y > o.base) { hit = true; break; }
     }
@@ -996,7 +1168,7 @@ function updateEffects(dt) {
     let hit = null;
     if (G.alive && G.state === 'play' && segHit(ax, ay, az, m.pos.x, m.pos.y, m.pos.z, drone.pos, 1.5)) hit = 'me';
     else if (m.life <= 0 || m.pos.y < groundAt(m.pos.x, m.pos.z)) hit = 'x';
-    else for (const o of obstacles) {
+    else for (const o of obsNear(m.pos.x, m.pos.z)) {
       const ox = m.pos.x - o.x, oz = m.pos.z - o.z;
       if (ox * ox + oz * oz < o.r * o.r * 0.7 && m.pos.y < o.top && m.pos.y > o.base) { hit = 'x'; break; }
     }
@@ -1018,7 +1190,7 @@ function updateEffects(dt) {
     const ax = b.pos.x, ay = b.pos.y, az = b.pos.z;
     b.pos.addScaledVector(b.vel, dt); b.life -= dt;
     let dead = b.life <= 0 || b.pos.y < groundAt(b.pos.x, b.pos.z);
-    if (!dead) for (const o of obstacles) {   // hostile fire stops at cover
+    if (!dead) for (const o of obsNear(b.pos.x, b.pos.z)) {   // hostile fire stops at cover
       const ox = b.pos.x - o.x, oz = b.pos.z - o.z;
       if (ox * ox + oz * oz < o.r * o.r * 0.7 && b.pos.y < o.top && b.pos.y > o.base + 0.5) { burst(b.pos, 4, [0xff3b5c, 0x777066], 4, 0.4, 0.7, 1); dead = true; break; }
     }
@@ -1166,7 +1338,7 @@ function airMove(e, dt, floorAdd = 5) {
   e.pos.addScaledVector(e.vel, dt);
   if (floorAdd > 0) {
     let floor = groundAt(e.pos.x, e.pos.z) + floorAdd;
-    for (const o of obstacles) {
+    for (const o of obsNear(e.pos.x, e.pos.z)) {
       const ox = e.pos.x - o.x, oz = e.pos.z - o.z;
       if (ox * ox + oz * oz < (o.r + 3) ** 2) floor = Math.max(floor, o.top + 2.5);
     }
@@ -1316,7 +1488,7 @@ function drive(e, tx, tz, sp, dt) {
   let dx = tx - e.pos.x, dz = tz - e.pos.z;
   const d = Math.hypot(dx, dz);
   if (d > 0.01) { dx /= d; dz /= d; }
-  for (const o of obstacles) {   // steer around cover and other vehicles
+  for (const o of obsNear(e.pos.x, e.pos.z)) {   // steer around cover and other vehicles
     if (o.top - o.base < 1.2) continue;
     const ox = e.pos.x - o.x, oz = e.pos.z - o.z, r = o.r + e.radius + 4, d2 = ox * ox + oz * oz;
     if (d2 < r * r) { const dd = Math.sqrt(d2) || 1, k = (r - dd) / r * 2; dx += ox / dd * k; dz += oz / dd * k; }
@@ -1332,7 +1504,7 @@ function drive(e, tx, tz, sp, dt) {
   e.spd += (want - e.spd) * (1 - Math.exp(-2 * dt));
   const nx = clamp(e.pos.x - Math.sin(e.yaw) * e.spd * dt, -185, 185), nz = clamp(e.pos.z - Math.cos(e.yaw) * e.spd * dt, -185, 185);
   let blocked = false;
-  for (const o of obstacles) {
+  for (const o of obsNear(nx, nz)) {
     if (o.top - o.base < 1.2) continue;
     const ox = nx - o.x, oz = nz - o.z, r = o.r + e.radius * 0.6;
     if (ox * ox + oz * oz < r * r) { blocked = true; break; }
@@ -1858,10 +2030,12 @@ function leaveArena() {
 $('joinBtn').addEventListener('click', startArena);
 
 // ---------- online world (own game server over WebSocket) ----------
-const WORLD = { ...ARENA, id: 'world', name: 'Frontier', setup() {}, tick() {},
+const fmtDist = (d) => (d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`);
+const WORLD = { ...ARENA, id: 'world', name: 'Frontier', map: 'open', open: true, pad: null, setup() {}, tick() {},
   status: () => {
     const rows = [], pr = WNET.profile;
     if (pr) rows.push(['Pilot', `Lv ${pr.level | 0} · ${pr.credits | 0} cr`, false, 'me']);
+    if (OW) { const n = OW.nearestOutpost(drone.pos.x, drone.pos.z); rows.push([`Outpost ${n.outpost.name}`, fmtDist(n.dist)]); }
     for (const a of WNET.list.slice(0, 6)) rows.push([a.me ? `${a.n} (you)` : a.n, `${a.k} K · ${a.d} D`, false, a.me ? 'me' : '']);
     return rows;
   },
@@ -1976,6 +2150,7 @@ function feedLine(killer, victim, victimIsMe) {
 }
 function placeSpawn(s) {
   if (![s.x, s.z].every(Number.isFinite)) return;
+  CHUNKS?.update(s.x, s.z, 99);   // load everything around the spawn point before the first frame
   drone.pos.set(s.x, terrainH(s.x, s.z) + 24, s.z); drone.vel.set(0, 0, 0);
   drone.yaw = Number.isFinite(s.y) ? s.y : 0; drone.aim = -0.08;
   drone.powered = true; drone.airborne = true; drone.agl = 24; drone.group.visible = true;
@@ -1997,6 +2172,10 @@ async function startWorld() {
   const btn = $('worldBtn');
   btn.disabled = true; btn.textContent = 'Connecting…'; $('worldNote').textContent = '';
   audio.init(); audio.ctx?.resume?.();
+  if (!OW) {
+    try { OW = await import(WNET.url.replace(/^ws/, 'http').replace(/\/ws$/, '/worldgen.js')); }
+    catch { $('worldNote').textContent = 'Could not load the world map. Check your connection and try again.'; btn.disabled = false; btn.textContent = 'Enter world'; return; }
+  }
   let wel;
   try { wel = await WNET.connect(); }
   catch (err) { WNET.ws = null; $('worldNote').textContent = err.message; btn.disabled = false; btn.textContent = 'Enter world'; return; }
@@ -2260,7 +2439,7 @@ function warnOnce(key, text, kind, cooldown) {
 function loadLevel(i) {
   const lv = typeof i === 'number' ? LEVELS[i] : i;
   if (typeof i === 'number') G.level = i;
-  L = lv; M = MAPS[L.map]; ROAD = L.road || null;
+  L = lv; M = MAPS[L.map]; ROAD = L.road || null; OPEN = !!L.open;
   PAD.x = L.pad ? L.pad.x : 0; PAD.z = L.pad ? L.pad.z : 140;
   S = { spawned: {} };
   clearCombat();
@@ -2422,14 +2601,15 @@ function updateDrone(dt, inp) {
   }
   d.pos.addScaledVector(d.vel, dt);
 
-  const lim = HALF - 12;
+  const lim = OPEN ? OW.HALF - 30 : HALF - 12;
   if (Math.abs(d.pos.x) > lim) { d.pos.x = Math.sign(d.pos.x) * lim; d.vel.x *= -0.3; warnOnce('edge', 'Edge of the operating area', 'warn', 3); }
   if (Math.abs(d.pos.z) > lim) { d.pos.z = Math.sign(d.pos.z) * lim; d.vel.z *= -0.3; warnOnce('edge', 'Edge of the operating area', 'warn', 3); }
   const ground = groundAt(d.pos.x, d.pos.z);
-  if (d.pos.y > ground + 75) { d.pos.y = ground + 75; d.vel.y = Math.min(0, d.vel.y); warnOnce('ceil', 'Altitude limit: 75 m', 'amber', 3); }
+  const ceiling = OPEN ? 120 : 75;
+  if (d.pos.y > ground + ceiling) { d.pos.y = ground + ceiling; d.vel.y = Math.min(0, d.vel.y); warnOnce('ceil', `Altitude limit: ${ceiling} m`, 'amber', 3); }
 
   G.bump -= dt;
-  for (const o of obstacles) {
+  for (const o of obsNear(d.pos.x, d.pos.z)) {
     const ox = d.pos.x - o.x, oz = d.pos.z - o.z, r = o.r + 0.6;
     if (ox * ox + oz * oz < r * r && d.pos.y < o.top) {
       const len = Math.hypot(ox, oz) || 1, nx = ox / len, nz = oz / len;
@@ -2600,6 +2780,7 @@ function sizeMap() {
   const s = map.clientWidth * Math.min(devicePixelRatio, 2);
   map.width = map.height = Math.round(s);
   treeLayer = document.createElement('canvas'); treeLayer.width = treeLayer.height = map.width;
+  if (OPEN) return;   // the open world draws a radar around the drone instead
   const t = treeLayer.getContext('2d'), sc = map.width / (HALF * 2), P = (v) => (v + HALF) * sc;
   if (ROAD) {
     t.strokeStyle = 'rgba(214,200,160,0.55)'; t.lineWidth = Math.max(1.5, sc * 4); t.beginPath();
@@ -2612,8 +2793,40 @@ function sizeMap() {
   t.fillStyle = '#ffb627'; t.fillRect(P(PAD.x) - 4 * sc, P(PAD.z) - 4 * sc, 8 * sc, 8 * sc);
   if (L.hq) { t.fillStyle = '#7fe0a0'; t.fillRect(P(HQ.x) - 6 * sc, P(HQ.z) - 4 * sc, 12 * sc, 8 * sc); }
 }
+const RADAR = 800;
+function drawRadar() {
+  const W = map.width, c = W / 2, sc = c / RADAR, d = drone, u = W / 120;
+  mctx.clearRect(0, 0, W, W);
+  mctx.strokeStyle = 'rgba(214,240,226,0.16)'; mctx.lineWidth = Math.max(1, u * 0.5);
+  for (const r of [200, 400, 600, 800]) { mctx.beginPath(); mctx.arc(c, c, r * sc, 0, 7); mctx.stroke(); }
+  mctx.font = `600 ${Math.round(u * 7)}px "JetBrains Mono", monospace`; mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+  mctx.fillStyle = 'rgba(214,240,226,0.55)'; mctx.fillText('N', c, u * 6);
+  const near = OW.nearestOutpost(d.pos.x, d.pos.z).outpost, edge = c - u * 5;
+  for (const o of OW.OUTPOSTS) {
+    let x = c + (o.x - d.pos.x) * sc, y = c + (o.z - d.pos.z) * sc;
+    const dx = x - c, dy = y - c, len = Math.hypot(dx, dy), inside = len <= edge;
+    if (!inside && o !== near) continue;
+    if (!inside) { x = c + dx / len * edge; y = c + dy / len * edge; }   // nearest outpost stays on the rim
+    mctx.fillStyle = '#ffb627'; mctx.fillRect(x - u * 2.5, y - u * 2.5, u * 5, u * 5);
+    if (inside) { mctx.fillStyle = 'rgba(255,214,140,0.85)'; mctx.font = `600 ${Math.round(u * 5.5)}px "JetBrains Mono", monospace`; mctx.fillText(o.name, x, y + u * 7); }
+  }
+  for (const e of ents) {
+    if (e.kind !== 'pilot' || !e.net?.al) continue;
+    const x = c + (e.pos.x - d.pos.x) * sc, y = c + (e.pos.z - d.pos.z) * sc;
+    if (Math.hypot(x - c, y - c) > edge) continue;
+    const r = u * 3;
+    mctx.fillStyle = hex(COLORS[Math.max(0, e.col)]);
+    mctx.beginPath(); mctx.moveTo(x, y - r); mctx.lineTo(x + r, y); mctx.lineTo(x, y + r); mctx.lineTo(x - r, y); mctx.fill();
+  }
+  mctx.save(); mctx.translate(c, c); mctx.rotate(-d.yaw);
+  const s = W / 26;
+  mctx.fillStyle = 'rgba(255,255,255,0.12)'; mctx.beginPath(); mctx.moveTo(0, 0); mctx.arc(0, 0, LOCK_RANGE * sc, -Math.PI / 2 - LOCK_CONE * 1.6, -Math.PI / 2 + LOCK_CONE * 1.6); mctx.closePath(); mctx.fill();
+  mctx.fillStyle = '#ffffff'; mctx.beginPath(); mctx.moveTo(0, -s); mctx.lineTo(s * 0.6, s * 0.7); mctx.lineTo(0, s * 0.35); mctx.lineTo(-s * 0.6, s * 0.7); mctx.closePath(); mctx.fill();
+  mctx.restore();
+}
 function drawMap() {
   if (!treeLayer) return;
+  if (OPEN) { drawRadar(); return; }
   const W = map.width, sc = W / (HALF * 2), P = (v) => clamp((v + HALF) * sc, 2, W - 2);
   mctx.clearRect(0, 0, W, W);
   mctx.drawImage(treeLayer, 0, 0);
@@ -2736,7 +2949,7 @@ function frame(now) {
           $('respawnText').textContent = `Respawning in ${Math.max(1, Math.ceil(G.respawnT))}`;
           if (G.respawnT <= 0 && G.mode === 'arena') respawnArena();
         }
-        if (G.mode === 'world') WNET.tick(dt); else NET.tick(dt);
+        if (G.mode === 'world') { WNET.tick(dt); CHUNKS?.update(drone.pos.x, drone.pos.z, 2); } else NET.tick(dt);
       }
     }
     updateEnts(dt);

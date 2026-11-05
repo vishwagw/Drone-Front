@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { World, RULES } from '../world.js';
+import * as WG from '../worldgen.js';
 
 const client = () => { const inbox = []; return { inbox, send: (m) => inbox.push(m), last: (t) => inbox.filter((m) => m.t === t).at(-1) }; };
 const account = (callsign) => ({ id: Math.random(), callsign, xp: 0, credits: 0, kills: 0, deaths: 0, owned: 1 });
@@ -77,6 +78,55 @@ test('crash damage after being shot credits the shooter', () => {
   assert.equal(b.h, 100 - 2 * RULES.gunDamage - RULES.selfDamageMax);
   w.onSelfDamage(b, { n: 999 });
   assert.equal(B.last('kill').k, a.id);
+});
+
+test('pilots spawn beside an outpost, above the ground', () => {
+  const w = new World('Test', store());
+  for (let i = 0; i < 20; i++) {
+    const [x, y, z] = w.spawnPoint();
+    const { dist } = WG.nearestOutpost(x, z);
+    assert.ok(dist >= 29 && dist <= 61, `spawn ${dist.toFixed(1)} m from an outpost`);
+    assert.ok(y > WG.height(x, z) + 25);
+  }
+});
+
+test('a new pilot spawns within reach of pilots already flying', () => {
+  const w = new World('Test', store());
+  const A = client(), a = w.join(A.send, account('Alpha'), 1);
+  for (let i = 0; i < 20; i++) {
+    const [x, , z] = w.spawnPoint();
+    assert.ok(Math.hypot(x - a.p[0], z - a.p[2]) < RULES.viewRange, 'spawned within view range of the other pilot');
+  }
+});
+
+test('landing on any outpost pad repairs the hull', () => {
+  const { w, b } = duel();
+  const o = WG.OUTPOSTS[5];
+  b.h = 40; b.p = [o.x + 1, o.y + 0.5, o.z];
+  for (let i = 0; i < 15; i++) w.tick();
+  assert.ok(b.h > 50);
+  b.h = 40; b.p = [o.x + 1, o.y + 40, o.z];   // hovering high over it does not count
+  w.tick();
+  assert.equal(b.h, 40);
+});
+
+test('snapshots only carry pilots within view range', () => {
+  const { w, A, a, b } = duel();
+  b.p = [a.p[0] + RULES.viewRange + 100, 30, a.p[2]];
+  w.tick();
+  assert.equal(A.last('snap').pl.length, 0);
+  b.p = [a.p[0] + 300, 30, a.p[2]];
+  w.tick();
+  assert.equal(A.last('snap').pl.length, 1);
+});
+
+test('the generator is deterministic and keeps outposts on dry, flat ground', () => {
+  assert.equal(WG.OUTPOSTS.length, 16);
+  for (const o of WG.OUTPOSTS) {
+    assert.ok(o.y > WG.WATER + 2);
+    assert.ok(Math.abs(WG.height(o.x + 8, o.z) - o.y) < 0.5, `${o.name} pad is flat`);
+  }
+  assert.deepEqual(WG.chunkItems(2, -3), WG.chunkItems(2, -3));
 });
 
 test('dead pilots respawn with full hull after the timer', () => {

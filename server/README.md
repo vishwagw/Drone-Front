@@ -13,6 +13,12 @@ worlds over WebSocket at `/ws`.
 - **Combat authority:** the server decides hull, damage, deaths, kills and rocket ammo,
   checks every hit claim (fire rate, range, ammo, spawn shields, target alive) and
   snaps back movement faster than a drone can fly.
+- **Open world:** a 4 km by 4 km generated map (`worldgen.js`) with lakes, forests,
+  grassland, desert, mountain ranges, towns and 16 outposts whose pads repair and
+  rearm. The server and the game page run the same generator (the page loads it from
+  `/worldgen.js`), so the map itself is never sent over the network. Pilots spawn
+  beside an outpost near other pilots, and each pilot only receives updates about
+  pilots within 1.5 km.
 - **Storage:** SQLite (`node:sqlite`, built into Node 22.13+) at `$DATA_DIR/drone-front.db`.
 
 ## Run it locally
@@ -48,8 +54,10 @@ npm test
 | `TRUST_PROXY` | | `1` behind a proxy that sets the client IP header (Fly.io) |
 | `CLIENT_FILE` | | The game page to serve (default `../index.html`) |
 
-Gameplay limits (damage, fire rate, ranges, 32 pilots per world) are in `RULES` in
-`world.js`. When a world is full the next pilot goes to a new one.
+Gameplay limits (damage, fire rate, ranges, view range, 64 pilots per world) are in
+`RULES` in `world.js`. When a world is full the next pilot goes to a new copy of the
+map. Changing anything in `worldgen.js` changes the map for everyone, so deploy the
+server and page together.
 
 ## Launch checklist
 

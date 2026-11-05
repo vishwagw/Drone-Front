@@ -168,6 +168,13 @@ export class Server {
       return;
     }
     if (url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
+    if (url === '/worldgen.js' && req.method === 'GET') {   // the shared map generator, imported by the game page
+      fs.readFile(path.join(HERE, 'worldgen.js'), (err, body) => {
+        if (err) { res.writeHead(500); res.end(); return; }
+        res.writeHead(200, { ...security, 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache', 'access-control-allow-origin': '*' }); res.end(body);
+      });
+      return;
+    }
     if (!url.startsWith('/api/')) { res.writeHead(404, security); res.end('not found'); return; }
     let raw = '', size = 0;
     req.setEncoding('utf8');
