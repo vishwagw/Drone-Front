@@ -58,11 +58,36 @@ export const OUTPOSTS = [];
   }
 }
 
+// ---- hostile bases: a bunker, AA guns and a landing pad on flattened ground, away from outposts ----
+const BASE_NAMES = ['Ironhold', 'Redcliff', 'Saltmarsh', 'Stonegate', 'Dustwell', 'Greywater', 'Ashfield', 'Blackrock'];
+export const BASE_AA = [[20, -14], [-20, -14], [-22, 16]];   // AA gun positions relative to the base centre
+export const BASE_PAD = [18, 18];                             // repair pad, usable once pilots hold the base
+export const BASE_RADIUS = 45;                                // capture ring
+export const BASES = [];
+{
+  const R = rng(9191);
+  const spots = [[-900, -900], [900, -900], [-900, 900], [900, 900], [0, -1150], [0, 1150], [-1150, 0], [1150, 0]];
+  for (const [cx, cz] of spots) {
+    let best = null, score = Infinity;
+    for (let k = 0; k < 24; k++) {
+      const x = cx + (R() - 0.5) * 320, z = cz + (R() - 0.5) * 320, h = rawHeight(x, z);
+      const nearOutpost = OUTPOSTS.some((o) => Math.hypot(o.x - x, o.z - z) < 260);
+      const s = (nearOutpost ? 500 : 0) + (h < 4 ? 100 + (4 - h) : h > 70 ? 100 + h : Math.abs(h - 18) * 0.1);
+      if (s < score) { score = s; best = { x, z, h }; }
+    }
+    BASES.push({ id: BASES.length, name: BASE_NAMES[BASES.length], x: Math.round(best.x), z: Math.round(best.z), y: Math.max(WATER + 3, best.h) });
+  }
+}
+
 export function height(x, z) {
   let h = rawHeight(x, z);
   for (const o of OUTPOSTS) {
     const dx = x - o.x, dz = z - o.z, d2 = dx * dx + dz * dz;
     if (d2 < 2025) { const k = smooth(14, 45, Math.sqrt(d2)); h = o.y + (h - o.y) * k; }
+  }
+  for (const b of BASES) {
+    const dx = x - b.x, dz = z - b.z, d2 = dx * dx + dz * dz;
+    if (d2 < 4900) { const k = smooth(32, 70, Math.sqrt(d2)); h = b.y + (h - b.y) * k; }
   }
   return h;
 }
@@ -83,6 +108,19 @@ export function padAt(x, z, r = 5) {
   for (const o of OUTPOSTS) if (Math.hypot(x - o.x, z - o.z) < r) return o;
   return null;
 }
+export function nearestBase(x, z) {
+  let best = null, bd = Infinity;
+  for (const b of BASES) { const d = Math.hypot(x - b.x, z - b.z); if (d < bd) { bd = d; best = b; } }
+  return { base: best, dist: bd };
+}
+// Collision cylinders for one chunk's scenery: the same shapes the game page builds.
+export function chunkObstacles(ci, cj) {
+  return chunkItems(ci, cj).map((t) => {
+    if (t.k === 'tree') return { x: t.x, z: t.z, r: 2.8 * t.s * 0.85, top: t.y + 6.6 * t.s + 3.2 * t.s * 0.85, base: t.y };
+    const rock = t.k === 'rock', y = rock ? t.y : t.y - 0.5;
+    return { x: t.x, z: t.z, r: Math.max(t.w, t.d) * (rock ? 0.85 : 0.62), top: y + t.hgt * (rock ? 0.85 : 1), base: t.y };
+  });
+}
 export function nearestOutpost(x, z) {
   let best = null, bd = Infinity;
   for (const o of OUTPOSTS) { const d = Math.hypot(x - o.x, z - o.z); if (d < bd) { bd = d; best = o; } }
@@ -99,7 +137,7 @@ export function chunkItems(ci, cj) {
     if (Math.abs(x) > HALF - 40 || Math.abs(z) > HALF - 40) continue;
     const h = height(x, z);
     if (h < WATER + 1) continue;
-    if (OUTPOSTS.some((o) => Math.hypot(x - o.x, z - o.z) < 55)) continue;
+    if (OUTPOSTS.some((o) => Math.hypot(x - o.x, z - o.z) < 55) || BASES.some((b) => Math.hypot(x - b.x, z - b.z) < 75)) continue;
     const slope = Math.abs(height(x + 3, z) - h) + Math.abs(height(x, z + 3) - h);
     const bio = biome(x, z, h), town = townness(x, z) > 0.7 && h < 60 && slope < 1.2;
     if (town && roll < 0.42) {

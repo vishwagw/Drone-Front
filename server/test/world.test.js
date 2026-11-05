@@ -8,7 +8,7 @@ const account = (callsign) => ({ id: Math.random(), callsign, xp: 0, credits: 0,
 const store = () => ({ dirty: new Set(), markDirty(a) { this.dirty.add(a); } });
 
 function duel() {
-  const s = store(), w = new World('Test', s);
+  const s = store(), w = new World('Test', s, RULES, { npcs: false });
   const A = client(), B = client();
   const a = w.join(A.send, account('Alpha'), 1), b = w.join(B.send, account('Bravo'), 2);
   a.shieldUntil = b.shieldUntil = 0; a.graceUntil = b.graceUntil = 0;
@@ -81,7 +81,7 @@ test('crash damage after being shot credits the shooter', () => {
 });
 
 test('pilots spawn beside an outpost, above the ground', () => {
-  const w = new World('Test', store());
+  const w = new World('Test', store(), RULES, { npcs: false });
   for (let i = 0; i < 20; i++) {
     const [x, y, z] = w.spawnPoint();
     const { dist } = WG.nearestOutpost(x, z);
@@ -91,7 +91,7 @@ test('pilots spawn beside an outpost, above the ground', () => {
 });
 
 test('a new pilot spawns within reach of pilots already flying', () => {
-  const w = new World('Test', store());
+  const w = new World('Test', store(), RULES, { npcs: false });
   const A = client(), a = w.join(A.send, account('Alpha'), 1);
   for (let i = 0; i < 20; i++) {
     const [x, , z] = w.spawnPoint();

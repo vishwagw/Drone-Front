@@ -19,6 +19,18 @@ worlds over WebSocket at `/ws`.
   `/worldgen.js`), so the map itself is never sent over the network. Pilots spawn
   beside an outpost near other pilots, and each pilot only receives updates about
   pilots within 1.5 km.
+- **Server-run enemies (`npc.js`):** 8 hostile bases, each with 3 AA guns, a tank
+  patrolling nearby and two scout drones on patrol to a neighbouring base. Enemies
+  only think while a pilot is within 1.8 km. Their shots are simulated on the server
+  and stopped by terrain, trees, rocks and buildings, so the server alone decides
+  enemy damage. Pilots' hits on enemies go through the same checks as hits on
+  pilots. Kills pay credits and XP (scout 15, AA gun 25, tank 40 credits); scouts and
+  tanks respawn after two to three minutes.
+- **Capturing bases:** a base cannot be taken while any AA gun stands. Once they are
+  down, pilots flying below 35 m inside the 45 m ring fill a capture bar (15 seconds,
+  faster with more pilots). Capturing pays 60 credits and 250 XP to every pilot
+  within 300 m, turns the base's pad into a repair pad, and hostile forces retake it
+  with a fresh garrison after 10 minutes.
 - **Storage:** SQLite (`node:sqlite`, built into Node 22.13+) at `$DATA_DIR/drone-front.db`.
 
 ## Run it locally

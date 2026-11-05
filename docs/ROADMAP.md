@@ -28,9 +28,11 @@
    such as Postmark or Resend), callsign rules and player reporting.
 3. **A real open world:** the streamed map is done: 4 km across in 320 m chunks
    with two detail levels, biomes, towns, 16 outposts, a radar minimap and
-   interest management (updates only for pilots within 1.5 km). Still to do:
-   server-run AI (patrols, convoys, bases to capture) and world events, so the
-   world has things to fight when few pilots are online.
+   interest management (updates only for pilots within 1.5 km). Server-run
+   enemies are done too: 8 capturable bases with AA guns, tank and scout patrols,
+   enemy fire simulated on the server, credits and XP for kills and captures.
+   Still to do: convoys, timed world events, and harder enemy types (gunships,
+   missile trucks) for experienced pilots.
 4. **Progression and economy:** drone classes and upgrades bought with credits,
    cosmetics, daily missions, squads and chat.
 5. **Server-side hit simulation:** the server re-checks line of sight and aim for

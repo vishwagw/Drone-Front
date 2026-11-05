@@ -2,6 +2,7 @@
 // pilot stats; clients send their own flight state and claim hits, and every claim is checked
 // (rate, range, ammo, target state) before it is applied. The map is the generated open world.
 import * as WG from './worldgen.js';
+import { Npcs } from './npc.js';
 
 export const RULES = {
   maxPlayersPerWorld: 64,
@@ -25,10 +26,12 @@ export const publicProfile = (a) => ({ name: a.callsign, xp: a.xp, level: level(
 
 export class World {
   // `store` needs markDirty(account); accounts are live objects with callsign, xp, credits, kills, deaths.
-  constructor(name, store, rules = RULES) {
+  constructor(name, store, rules = RULES, { npcs = true } = {}) {
     this.name = name; this.store = store; this.R = rules;
     this.players = new Map(); this.nextId = 1;
+    this.npcs = npcs ? new Npcs(this) : null;
   }
+  profileOf(pl) { return publicProfile(pl.account); }
   get full() { return this.players.size >= this.R.maxPlayersPerWorld; }
 
   // Spawn beside an outpost: usually one with pilots within a few kilometres but nobody on top of it.
@@ -89,24 +92,34 @@ export class World {
     }
   }
 
+  // A pilot claims a hit on another pilot or on a server-run enemy (ids starting with "n").
   onHit(pl, m) {
-    const target = this.players.get(String(m.target));
-    const t = now();
-    if (!pl.al || !target || target === pl || !target.al || target.shieldUntil > t) return false;
+    const id = String(m.target), t = now();
+    if (!pl.al) return false;
+    let pos, apply;
+    if (id.startsWith('n')) {
+      const n = this.npcs?.list.get(id);
+      if (!n) return false;
+      pos = n.p; apply = (dmg) => this.npcs.damage(n, dmg, pl);
+    } else {
+      const target = this.players.get(id);
+      if (!target || target === pl || !target.al || target.shieldUntil > t) return false;
+      pos = target.p; apply = (dmg) => this.damage(target, dmg, pl);
+    }
     if (m.w === 'gun') {
-      if (t - pl.lastFire > 600 || dist(pl.p, target.p) > this.R.gunRange) return false;
+      if (t - pl.lastFire > 600 || dist(pl.p, pos) > this.R.gunRange) return false;
       pl.gunBudget = Math.min(this.R.gunBurst, pl.gunBudget + (t - pl.gunAt) / 1000 * this.R.gunRate); pl.gunAt = t;
       const n = Math.min(Math.max(1, m.n | 0), Math.floor(pl.gunBudget));
       if (n <= 0) return false;
       pl.gunBudget -= n;
-      this.damage(target, n * this.R.gunDamage, pl);
+      apply(n * this.R.gunDamage);
       return true;
     }
     if (m.w === 'rocket') {
       pl.rocketCredits = pl.rocketCredits.filter((exp) => exp > t);
-      if (!pl.rocketCredits.length || dist(pl.p, target.p) > this.R.rocketRange) return false;
+      if (!pl.rocketCredits.length || dist(pl.p, pos) > this.R.rocketRange) return false;
       pl.rocketCredits.shift();
-      this.damage(target, this.R.rocketDamage, pl);
+      apply(this.R.rocketDamage);
       return true;
     }
     return false;
@@ -119,14 +132,17 @@ export class World {
     this.damage(pl, Math.min(n, this.R.selfDamageMax), by, true);
   }
 
-  damage(target, n, by, self = false) {
+  // `src` names a server-run enemy that did the damage ("a tank", "AA fire").
+  damage(target, n, by, self = false, src = null) {
+    if (!target.al) return;
     target.h = Math.max(0, target.h - n);
     if (by && !self) target.lastHit = { id: by.id, t: now() };
+    if (src) target.lastHit = { src, t: now() };
     target.send({ t: 'dmg', n, h: target.h, from: by && !self ? by.id : null });
-    if (target.h <= 0) this.kill(target, by);
+    if (target.h <= 0) this.kill(target, by, src || (self && target.lastHit?.src && now() - target.lastHit.t < 6000 ? target.lastHit.src : null));
   }
 
-  kill(victim, killer) {
+  kill(victim, killer, src = null) {
     victim.al = false; victim.f = 0; victim.respawnAt = now() + this.R.respawnMs;
     victim.d++; victim.account.deaths++; this.store.markDirty(victim.account);
     const credited = killer && killer !== victim && this.players.has(killer.id);
@@ -136,7 +152,7 @@ export class World {
       this.store.markDirty(a);
       killer.send({ t: 'profile', profile: publicProfile(a) });
     }
-    this.broadcast({ t: 'kill', k: credited ? killer.id : null, v: victim.id, kn: credited ? killer.name : null, vn: victim.name });
+    this.broadcast({ t: 'kill', k: credited ? killer.id : null, v: victim.id, kn: credited ? killer.name : null, vn: victim.name, src: credited ? null : src });
   }
 
   tick() {
@@ -144,7 +160,7 @@ export class World {
     for (const pl of this.players.values()) {
       if (!pl.al) { if (t >= pl.respawnAt) this.spawn(pl); continue; }
       if (t - pl.regenAt >= this.R.rocketRegenMs) { pl.regenAt = t; pl.ammo = Math.min(this.R.rocketAmmo, pl.ammo + 1); }
-      const pad = WG.padAt(pl.p[0], pl.p[2], this.R.padRadius);
+      const pad = WG.padAt(pl.p[0], pl.p[2], this.R.padRadius) || this.npcs?.ownedPadAt(pl.p[0], pl.p[2]);
       if (pad && pl.p[1] < pad.y + this.R.padMaxY) {   // landed on an outpost pad: repair and rearm
         pl.h = Math.min(this.R.hull, pl.h + this.R.padHealPerSec / this.R.snapshotHz);
         if (t >= pl.rearmAt && pl.ammo < this.R.rocketAmmo) { pl.ammo++; pl.rearmAt = t + this.R.padRearmMs; }
@@ -153,9 +169,11 @@ export class World {
     const view = [...this.players.values()].map((o) => ({ id: o.id, n: o.name, c: o.c, p: o.p, v: o.v, y: o.y, a: o.a,
       f: o.f, rs: o.rs, lk: o.lk, h: Math.round(o.h), al: o.al ? 1 : 0, iv: o.shieldUntil > t ? 1 : 0 }));
     const range = this.R.viewRange;
-    for (const pl of this.players.values()) {   // each pilot hears only about pilots within view range
+    this.npcs?.tick(1 / this.R.snapshotHz);
+    for (const pl of this.players.values()) {   // each pilot hears only about pilots and enemies within view range
       pl.send({ t: 'snap', me: { h: Math.round(pl.h * 10) / 10, al: pl.al ? 1 : 0, iv: pl.shieldUntil > t ? 1 : 0, rk: pl.ammo },
-        pl: view.filter((o) => o.id !== pl.id && Math.abs(o.p[0] - pl.p[0]) < range && Math.abs(o.p[2] - pl.p[2]) < range) });
+        pl: view.filter((o) => o.id !== pl.id && Math.abs(o.p[0] - pl.p[0]) < range && Math.abs(o.p[2] - pl.p[2]) < range),
+        npc: this.npcs ? this.npcs.view(pl.p, range) : [] });
     }
   }
 
@@ -163,6 +181,7 @@ export class World {
     const list = [...this.players.values()].map((o) => ({ id: o.id, n: o.name, k: o.k, d: o.d }))
       .sort((a, b) => b.k - a.k || a.d - b.d);
     this.broadcast({ t: 'board', list: list.slice(0, 20) });
+    if (this.npcs) this.broadcast({ t: 'bases', list: this.npcs.basesView() });
   }
 
   broadcast(m) { for (const pl of this.players.values()) pl.send(m); }

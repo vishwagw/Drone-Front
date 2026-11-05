@@ -504,7 +504,7 @@ function disposeTree(o) {
 function buildWorld(L) {
   if (world) { scene.remove(world); disposeTree(world); }
   world = new THREE.Group(); scene.add(world);
-  obsGrid.clear(); mapMarks.length = 0; CHUNKS = null;
+  obsGrid.clear(); mapMarks.length = 0; CHUNKS = null; baseVis.clear();
   const rng = mulberry32(M.seed);
   PH = [0, 1, 2, 3, 4].map(() => rng() * 6.28);
 
@@ -514,6 +514,7 @@ function buildWorld(L) {
   camera.far = L.open ? 1500 : 900; camera.updateProjectionMatrix();
   if (L.open) {   // the open world streams its terrain in chunks; only the outposts are built up front
     for (const o of OW.OUTPOSTS) addFOB(world, o.x, o.y, o.z, false, 24);
+    for (const b of OW.BASES) addBase(world, b);
     CHUNKS = new ChunkWorld(world);
     treeLayer = null;
     return;
@@ -643,6 +644,51 @@ function addFOB(parent, X, Y, Z, tents, mastH) {
   beacon.position.set(X - 9, Y + mastH + 0.1, Z + 6);
   parent.add(pad, ring, bags, mast, beacon);
   addObstacle({ x: X - 9, z: Z + 6, r: 0.6, top: Y + mastH + 0.3, base: Y });
+}
+
+// A hostile base: bunker, sandbag walls, flag, capture ring and a pad that works once pilots hold it.
+const baseVis = new Map();
+function addBase(parent, b) {
+  const g = new THREE.Group(); g.position.set(b.x, b.y, b.z);
+  const concrete = new THREE.MeshLambertMaterial({ color: 0x7c7a72, flatShading: true });
+  const bunker = new THREE.Mesh(new THREE.BoxGeometry(14, 5, 10), concrete); bunker.position.y = 2.5; bunker.castShadow = true;
+  const slit = new THREE.Mesh(new THREE.BoxGeometry(10, 0.7, 0.2), enemyDark); slit.position.set(0, 3.4, 5.05);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(15, 0.6, 11), concrete); roof.position.y = 5.3;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 14, 6), new THREE.MeshLambertMaterial({ color: 0x8a8a8a })); pole.position.set(0, 12.3, 0);
+  const flagMat = new THREE.MeshBasicMaterial({ color: 0xff3b5c, side: THREE.DoubleSide });
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 2), flagMat); flag.position.set(1.65, 18, 0);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xff3b5c, transparent: true, opacity: 0.55, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(OW.BASE_RADIUS - 0.8, OW.BASE_RADIUS, 96), ringMat);
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.25;
+  const walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1.1, 0.9, 0.6), new THREE.MeshLambertMaterial({ color: 0xa8956a }), 60);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
+  for (let i = 0; i < 60; i++) {   // a broken ring of sandbags with gaps
+    const a = (i / 60) * Math.PI * 2;
+    if (i % 15 < 2) { walls.setMatrixAt(i, HIDE); continue; }
+    walls.setMatrixAt(i, m4.compose(p.set(Math.sin(a) * 30, 0.45, -Math.cos(a) * 30), q.setFromAxisAngle(UP, -a), one));
+  }
+  g.add(bunker, slit, roof, pole, flag, ring, walls);
+  parent.add(g);
+  addObstacle({ x: b.x, z: b.z, r: 8, top: b.y + 5.6, base: b.y });
+  addFOB(parent, b.x + OW.BASE_PAD[0], b.y, b.z + OW.BASE_PAD[1], false, 6);
+  baseVis.set(b.id, { flagMat, ringMat, flag });
+}
+function applyBaseState() {
+  for (const [id, vis] of baseVis) {
+    const st = WNET.bases.get(id);
+    const held = st?.o === 'p', open = st && !held && st.aa === 0;
+    const col = held ? 0x7fe0a0 : open ? 0xffb627 : 0xff3b5c;
+    vis.flagMat.color.setHex(col); vis.ringMat.color.setHex(col);
+    vis.ringMat.opacity = open ? 0.85 : 0.55;
+  }
+}
+const fmtClock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function baseStatus(b) {
+  const st = WNET.bases.get(b.id);
+  if (!st) return { text: 'Hostile', warn: true };
+  if (st.o === 'p') return { text: `Held · ${fmtClock(st.left | 0)}`, warn: false };
+  if (st.aa > 0) return { text: `${st.aa} AA gun${st.aa === 1 ? '' : 's'} up`, warn: true };
+  return { text: `Capture ${Math.round((st.pr || 0) * 100)}%`, warn: false };
 }
 
 // ---------- open world: streamed terrain chunks ----------
@@ -1195,7 +1241,8 @@ function updateEffects(dt) {
       if (ox * ox + oz * oz < o.r * o.r * 0.7 && b.pos.y < o.top && b.pos.y > o.base + 0.5) { burst(b.pos, 4, [0xff3b5c, 0x777066], 4, 0.4, 0.7, 1); dead = true; break; }
     }
     if (!dead && G.state === 'play' && G.alive && segHit(ax, ay, az, b.pos.x, b.pos.y, b.pos.z, drone.pos, 1.15)) {
-      hurt(b.dmg, 'Shot down'); burst(b.pos, 8, [0xff3b5c, 0xffffff], 7, 0.4, 0.8, 0); dead = true;
+      if (!b.vis) hurt(b.dmg, 'Shot down');
+      burst(b.pos, 8, [0xff3b5c, 0xffffff], 7, 0.4, 0.8, 0); dead = true;
     }
     if (dead) { b.on = false; bolts.mesh.setMatrixAt(i, HIDE); return; }
     bolts.mesh.setMatrixAt(i, _m.compose(b.pos, _q.identity(), _s.setScalar(b.size * pulse)));
@@ -1242,11 +1289,17 @@ function clearCombat() {
   for (const f of fireballs) { f.life = 0; f.m.visible = false; }
   smokers.length = 0;
   NET.pilots.clear();
-  WNET.pilots.clear();
+  WNET.pilots.clear(); WNET.npcs.clear();
 }
 
 // ---------- damage ----------
 function damage(e, n, at, w = 'gun') {
+  if (e.kind === 'npc') {   // a server-run enemy in the open world: the server applies the hit
+    WNET.hit(e.nid, w); e.flash = 1;
+    burst(at, 3, [0xffe08a, 0xffffff], 6, 0.25, 0.6, 0);
+    audio.blip(1800, 1200, 0.03, 'square', 0.03);
+    return;
+  }
   if (e.kind === 'pilot') {   // another player: claim the hit; the server (world) or their page (arena) applies it
     if (!e.net || !e.net.al || e.net.iv) return;
     if (G.mode === 'world') WNET.hit(e.peer, w);
@@ -1321,7 +1374,7 @@ function fireBolt(from, speed, dmg, spread = 0, size = 1, lead = 0.7) {
   _v.copy(drone.pos).addScaledVector(drone.vel, t * lead);
   _v.x += rand(-spread, spread); _v.y += rand(-spread, spread) * 0.5; _v.z += rand(-spread, spread);
   const b = bolts.take();
-  b.pos.copy(from);
+  b.vis = false; b.pos.copy(from);
   b.vel.copy(_v).sub(b.pos).normalize().multiplyScalar(speed);
   b.life = 4; b.dmg = dmg; b.size = size;
   b.pos.addScaledVector(b.vel, 0.04);
@@ -1593,6 +1646,40 @@ AI.pilot = (e, dt) => {
     e.name = nm; e.tagHp = hpb; e.col = col;
     e.mats[0].color.setHex(COLORS[col]); e.stripe.material.color.setHex(COLORS[col]);
     drawTag(e);
+  }
+};
+const NPC_SPEC = { scout: { name: 'Scout', radius: 1.6 }, tank: { name: 'Tank', radius: 3.4 }, aa: { name: 'AA gun', radius: 2.8 } };
+function addNpc(o) {
+  const k = NPC_SPEC[o.k] ? o.k : 'scout', spec = NPC_SPEC[k];
+  const m = k === 'scout' ? modelAir('scout') : modelGround(k);
+  if (k !== 'scout') m.group.rotation.order = 'YXZ';
+  const p = Array.isArray(o.p) && o.p.every(Number.isFinite) ? new THREE.Vector3(...o.p) : new THREE.Vector3();
+  m.group.position.copy(p);
+  return addEnt({ kind: 'npc', k, nid: String(o.id), name: spec.name, radius: spec.radius, hp: Number(o.mh) || 1, air: k === 'scout', score: 0,
+    pos: p, group: m.group, tilt: m.tilt, rotors: m.rotors, mats: m.mats, turret: m.turret, head: m.head, guns: m.guns, gun: m.gun, hOff: m.hOff, recv: Date.now() });
+}
+AI.npc = (e, dt) => {
+  const n = e.net; if (!n) return;
+  if (Array.isArray(n.p) && Array.isArray(n.v) && [...n.p, ...n.v].every(Number.isFinite)) {
+    const age = clamp((Date.now() - e.recv) / 1000, 0, 0.3);
+    _v.set(n.p[0] + n.v[0] * age, n.p[1] + n.v[1] * age, n.p[2] + n.v[2] * age);
+    if (e.pos.distanceToSquared(_v) > 400) e.pos.copy(_v); else e.pos.lerp(_v, 1 - Math.exp(-10 * dt));
+    e.vel.set(n.v[0], n.v[1], n.v[2]);
+  }
+  e.hp = Number(n.h) || 0; e.maxHp = Number(n.mh) || 1;
+  const yaw = Number.isFinite(n.y) ? n.y : 0, ty = Number.isFinite(n.ty) ? n.ty : 0, ge = Number.isFinite(n.ge) ? n.ge : 0;
+  if (e.k === 'scout') { airPose(e, dt, yaw); return; }
+  const gy = terrainH(e.pos.x, e.pos.z);
+  e.group.position.set(e.pos.x, gy, e.pos.z);
+  if (e.k === 'tank') {
+    e.yaw = angleLerp(e.yaw, yaw, 1 - Math.exp(-8 * dt));
+    const fx = -Math.sin(e.yaw) * 2.2, fz = -Math.cos(e.yaw) * 2.2;
+    e.group.rotation.set(Math.atan2(terrainH(e.pos.x + fx, e.pos.z + fz) - terrainH(e.pos.x - fx, e.pos.z - fz), 4.4), e.yaw, 0);
+    e.turret.rotation.y = angleLerp(e.turret.rotation.y, ty - e.yaw, 1 - Math.exp(-8 * dt));
+    e.gun.rotation.x += (ge - e.gun.rotation.x) * (1 - Math.exp(-8 * dt));
+  } else {
+    e.head.rotation.y = angleLerp(e.head.rotation.y, ty, 1 - Math.exp(-8 * dt));
+    e.guns.rotation.x += (ge - e.guns.rotation.x) * (1 - Math.exp(-8 * dt));
   }
 };
 function remoteAim(e, out) {   // where another pilot's guns point: their lock target, else their sight line
@@ -2035,13 +2122,17 @@ const WORLD = { ...ARENA, id: 'world', name: 'Frontier', map: 'open', open: true
   status: () => {
     const rows = [], pr = WNET.profile;
     if (pr) rows.push(['Pilot', `Lv ${pr.level | 0} · ${pr.credits | 0} cr`, false, 'me']);
-    if (OW) { const n = OW.nearestOutpost(drone.pos.x, drone.pos.z); rows.push([`Outpost ${n.outpost.name}`, fmtDist(n.dist)]); }
+    if (OW) {
+      const n = OW.nearestOutpost(drone.pos.x, drone.pos.z); rows.push([`Outpost ${n.outpost.name}`, fmtDist(n.dist)]);
+      const nb = OW.nearestBase(drone.pos.x, drone.pos.z), st = baseStatus(nb.base);
+      rows.push([`Base ${nb.base.name} · ${fmtDist(nb.dist)}`, st.text, st.warn]);
+    }
     for (const a of WNET.list.slice(0, 6)) rows.push([a.me ? `${a.n} (you)` : a.n, `${a.k} K · ${a.d} D`, false, a.me ? 'me' : '']);
     return rows;
   },
 };
 const WNET = {
-  url: null, ws: null, id: null, world: '', pilots: new Map(), list: [], profile: null, sendT: 0, gun: {}, info: null,
+  url: null, ws: null, id: null, world: '', pilots: new Map(), npcs: new Map(), bases: new Map(), list: [], profile: null, sendT: 0, gun: {}, info: null,
   async detect() {
     const q = new URLSearchParams(location.search).get('server');
     if (q && /^wss?:\/\//.test(q)) this.url = q;
@@ -2105,6 +2196,35 @@ const WNET = {
         e.net = o; e.recv = Date.now();
       }
       for (const [id, e] of this.pilots) if (!live.has(id)) { removeEnt(e); this.pilots.delete(id); }
+      const seen = new Set();
+      for (const o of Array.isArray(m.npc) ? m.npc : []) {
+        const id = String(o.id); seen.add(id);
+        let e = this.npcs.get(id);
+        if (!e || !ents.includes(e)) { e = addNpc(o); this.npcs.set(id, e); }
+        e.net = o; e.recv = Date.now();
+      }
+      for (const [id, e] of this.npcs) if (!seen.has(id)) { removeEnt(e); this.npcs.delete(id); }
+    } else if (m.t === 'shot') {
+      if (!Array.isArray(m.o) || !Array.isArray(m.v) || ![...m.o, ...m.v].every(Number.isFinite)) return;
+      const b = bolts.take();
+      b.vis = true; b.pos.set(m.o[0], m.o[1], m.o[2]); b.vel.set(m.v[0], m.v[1], m.v[2]); b.life = 4; b.size = clamp(Number(m.s) || 1, 0.5, 2);
+      const d = b.pos.distanceTo(drone.pos);
+      if (d < 110) audio.blip(b.size > 1.2 ? 260 : 420, 140, 0.16, 'sawtooth', 0.05 * clamp(1.4 - d / 90, 0.2, 1));
+    } else if (m.t === 'ndown') {
+      const e = this.npcs.get(String(m.id));
+      if (e) { explode(e.pos, e.k === 'tank' ? 1.8 : e.k === 'aa' ? 1.3 : 0.85); removeEnt(e, e.k !== 'scout'); this.npcs.delete(String(m.id)); }
+      if (String(m.by) === this.id) {
+        const what = NPC_SPEC[m.k]?.name || 'Enemy';
+        pop(`+${m.cr | 0} cr`); audio.blip(700, 1400, 0.25, 'triangle', 0.12);
+        feedLine('You', `destroyed ${/^[AEIOU]/.test(what) ? 'an' : 'a'} ${what.toLowerCase().replace('aa', 'AA')}`, false, true);
+      }
+    } else if (m.t === 'bases') {
+      this.bases = new Map((Array.isArray(m.list) ? m.list : []).map((b) => [b.id | 0, b]));
+      applyBaseState();
+    } else if (m.t === 'event') {
+      const text = String(m.text || '').slice(0, 90);
+      toast(text, m.kind === 'warn' ? 'warn' : 'ok');
+      feedLine(null, text, false, true);
     } else if (m.t === 'dmg') {
       G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + (Number(m.n) || 0) / 40);
       G.shake = Math.max(G.shake, 0.35 + (Number(m.n) || 0) / 50);
@@ -2114,11 +2234,13 @@ const WNET = {
       if (G.hull > 50) G.warned.hull = false;
     } else if (m.t === 'kill') {
       const killerMe = String(m.k) === this.id, victimMe = String(m.v) === this.id;
-      feedLine(m.k ? (killerMe ? 'You' : cleanName(m.kn) || 'Pilot') : null, victimMe ? 'you' : cleanName(m.vn) || 'Pilot', victimMe);
+      const src = typeof m.src === 'string' ? m.src.slice(0, 20) : null;
+      if (!m.k && src) feedLine(null, `${victimMe ? 'You were' : `${cleanName(m.vn) || 'Pilot'} was`} downed by ${src}`, false, true);
+      else feedLine(m.k ? (killerMe ? 'You' : cleanName(m.kn) || 'Pilot') : null, victimMe ? 'you' : cleanName(m.vn) || 'Pilot', victimMe);
       if (victimMe) {
         G.alive = false; G.firing = false; G.respawnT = 4; mouseFire = false;
         explode(drone.pos, 1.2); drone.group.visible = false; drone.vel.set(0, 0, 0);
-        $('respawnTitle').textContent = m.k ? `Downed by ${cleanName(m.kn) || 'another pilot'}` : 'You went down';
+        $('respawnTitle').textContent = m.k ? `Downed by ${cleanName(m.kn) || 'another pilot'}` : src ? `Downed by ${src}` : 'You went down';
         $('respawn').hidden = false;
       }
       if (killerMe && !victimMe) { pop('+1 kill'); audio.blip(700, 1400, 0.25, 'triangle', 0.12); }
@@ -2140,9 +2262,11 @@ const WNET = {
     this.gun = {};
   },
 };
-function feedLine(killer, victim, victimIsMe) {
+function feedLine(killer, victim, victimIsMe, plain = false) {
   const el = document.createElement('div');
-  if (killer) { const k = document.createElement('b'); k.textContent = killer; el.append(k, ` downed ${victim}`); }
+  if (plain && killer) { const k = document.createElement('b'); k.textContent = killer; el.append(k, ` ${victim}`); }
+  else if (plain) el.textContent = victim;
+  else if (killer) { const k = document.createElement('b'); k.textContent = killer; el.append(k, ` downed ${victim}`); }
   else el.textContent = `${victimIsMe ? 'You' : victim} went down`;
   $('feed').prepend(el);
   while ($('feed').children.length > 4) $('feed').lastChild.remove();
@@ -2685,6 +2809,7 @@ function updateWeapons(dt, inp) {
     else if (G.rockets <= 0) warnOnce('norkt', 'No rockets: land on the pad to rearm', 'warn', 2);
     else {
       G.rockets--; G.rocketT = 0.45; G.rs++;
+      if (G.mode === 'world') WNET.sendT = 0;   // tell the server about the launch before the hit claim can arrive
       const r = rockets.take();
       r.vis = false; r.owner = null;
       r.pos.set(G.rockets % 2 ? 0.52 : -0.52, -0.15, -0.6).applyAxisAngle(UP, drone.yaw).add(drone.pos);
@@ -2742,7 +2867,12 @@ function updateChip() {
     else if (G.inv > 0) setChip('Spawn shield on', 'ok');
     else if (G.overheated) setChip('Gun overheated: cooling down', 'warn');
     else if (G.lock) setChip(`Locked: ${G.lock.name} · ${Math.round(G.lock.pos.distanceTo(d.pos))} m`, G.lock.kind === 'pilot' ? 'amber' : 'ok');
-    else if (G.mode === 'world') setChip(others ? `${others + 1} pilots in ${WNET.world}` : 'Nobody else is flying here right now', 'ok');
+    else if (G.mode === 'world' && OW && (() => { const nb = OW.nearestBase(d.pos.x, d.pos.z); return nb.dist < OW.BASE_RADIUS && WNET.bases.get(nb.base.id)?.o !== 'p'; })()) {
+      const nb = OW.nearestBase(d.pos.x, d.pos.z), st = WNET.bases.get(nb.base.id);
+      if (st && st.aa === 0) setChip(d.agl < 35 ? `Capturing ${nb.base.name} · ${Math.round(st.pr * 100)}%` : 'Fly lower than 35 m to capture', 'amber');
+      else setChip('Destroy the AA guns to capture this base', 'warn');
+    }
+    else if (G.mode === 'world') setChip(others ? `${others + 1} pilots in ${WNET.world}` : 'Bases with red flags are hostile: take out their AA, then hold the ring', 'ok');
     else setChip(others ? `${others + 1} pilots in this arena` : 'Nobody else here yet: practice bots are flying', 'ok');
     return;
   }
@@ -2809,6 +2939,21 @@ function drawRadar() {
     if (!inside) { x = c + dx / len * edge; y = c + dy / len * edge; }   // nearest outpost stays on the rim
     mctx.fillStyle = '#ffb627'; mctx.fillRect(x - u * 2.5, y - u * 2.5, u * 5, u * 5);
     if (inside) { mctx.fillStyle = 'rgba(255,214,140,0.85)'; mctx.font = `600 ${Math.round(u * 5.5)}px "JetBrains Mono", monospace`; mctx.fillText(o.name, x, y + u * 7); }
+  }
+  for (const b of OW.BASES) {
+    const x = c + (b.x - d.pos.x) * sc, y = c + (b.z - d.pos.z) * sc;
+    if (Math.hypot(x - c, y - c) > edge) continue;
+    const st = WNET.bases.get(b.id), r = u * 4;
+    mctx.fillStyle = st?.o === 'p' ? '#7fe0a0' : st && st.aa === 0 ? '#ffb627' : '#ff3b5c';
+    mctx.beginPath(); mctx.moveTo(x, y - r); mctx.lineTo(x + r, y + r * 0.8); mctx.lineTo(x - r, y + r * 0.8); mctx.fill();
+    mctx.fillStyle = 'rgba(255,190,190,0.85)'; mctx.font = `600 ${Math.round(u * 5.5)}px "JetBrains Mono", monospace`; mctx.fillText(b.name, x, y + u * 8);
+  }
+  mctx.fillStyle = '#ff3b5c';
+  for (const e of ents) {
+    if (e.kind !== 'npc') continue;
+    const x = c + (e.pos.x - d.pos.x) * sc, y = c + (e.pos.z - d.pos.z) * sc;
+    if (Math.hypot(x - c, y - c) > edge) continue;
+    if (e.air) { mctx.beginPath(); mctx.arc(x, y, u * 1.6, 0, 7); mctx.fill(); } else mctx.fillRect(x - u * 1.5, y - u * 1.5, u * 3, u * 3);
   }
   for (const e of ents) {
     if (e.kind !== 'pilot' || !e.net?.al) continue;
