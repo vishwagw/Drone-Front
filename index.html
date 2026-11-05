@@ -193,6 +193,14 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
 .arenaform label { display: grid; gap: 4px; font-family: var(--display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-size: 12px; }
 .arenaform input { font: 14px var(--mono); color: var(--text); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; width: 160px; box-sizing: border-box; -webkit-user-select: text; user-select: text; }
 .arenaform input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.link { background: none; border: 0; padding: 0; font: inherit; color: var(--amber); text-decoration: underline; cursor: pointer; }
+.link:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.arenaform input[type="email"], .arenaform input[type="password"] { width: 210px; }
+#acctIn { display: grid; gap: 12px; }
+#acctIn p { margin: 0; }
+.buy { display: grid; gap: 4px; border: 1px solid rgba(255, 182, 39, 0.45); border-radius: 6px; padding: 12px 14px; background: rgba(255, 182, 39, 0.06); }
+.buy b { font-family: var(--display); font-size: 20px; font-weight: 800; color: var(--amber); }
+.lvl.paid .st { color: var(--amber); letter-spacing: 0.02em; font-size: 12px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 
 @media (max-width: 520px) {
@@ -256,11 +264,26 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
         <span class="online" id="worldTxt"></span>
       </div>
       <p class="dim">A shared world that never stops. Fly in, fight whoever is there and leave when you like. The server checks every hit, and your kills, credits and XP stay on your pilot.</p>
-      <div class="arenaform">
-        <label for="worldName">Callsign <input id="worldName" maxlength="14" autocomplete="off" spellcheck="false"></label>
-        <button id="worldBtn" class="btn">Enter world</button>
+      <form id="acctOut" class="arenaform" novalidate>
+        <label for="acEmail">Email <input id="acEmail" type="email" autocomplete="email" spellcheck="false" required></label>
+        <label for="acPass">Password <input id="acPass" type="password" autocomplete="current-password" minlength="8" required></label>
+        <label for="acCall" id="acCallLab" hidden>Callsign <input id="acCall" maxlength="14" autocomplete="nickname" spellcheck="false"></label>
+        <button id="acGo" class="btn" type="submit">Sign in</button>
+        <button id="acSwitch" class="link" type="button">New pilot? Create an account</button>
+      </form>
+      <div id="acctIn" hidden>
+        <p id="acWho"></p>
+        <div class="buy" id="buyBox" hidden>
+          <b id="buyTitle">Full game · $5</b>
+          <span class="dim">One payment, no subscription. Unlocks sorties 03 to 07 and the online world.</span>
+        </div>
+        <div class="actions">
+          <button id="buyBtn" class="btn" hidden>Buy the full game</button>
+          <button id="worldBtn" class="btn" hidden>Enter world</button>
+          <button id="signOutBtn" class="btn ghost">Sign out</button>
+        </div>
       </div>
-      <p class="dim" id="worldNote"></p>
+      <p class="dim" id="worldNote" role="status"></p>
     </section>
     <section class="arena" id="arenaBox" aria-label="Online arena">
       <div class="arenahead">
@@ -1855,25 +1878,24 @@ const WNET = {
       } catch { /* not served by a Drone Front server */ }
     }
     renderWorldBox();
+    if (this.url) await initAccount();
   },
   myKey() { return this.id ? 'p_' + this.id : null; },
   send(m) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); },
-  connect(name) {
+  connect() {
     return new Promise((resolve, reject) => {
-      let token = null;
-      try { token = localStorage.getItem('drone-front-token'); } catch { /* storage unavailable */ }
       const ws = new WebSocket(this.url);
       this.ws = ws;
       const timer = setTimeout(() => { reject(new Error('The game server did not answer')); ws.close(); }, 8000);
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', token, name, color: NET.color }));
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', session: ACCT.token, color: NET.color }));
       ws.onmessage = (ev) => {
         let m; try { m = JSON.parse(ev.data); } catch { return; }
         if (m.t === 'welcome') {
           clearTimeout(timer);
           this.id = String(m.id); this.profile = m.profile; this.world = cleanName(m.world) || 'Frontier';
-          try { localStorage.setItem('drone-front-token', m.token); } catch { /* storage unavailable */ }
           resolve(m);
-        } else if (m.t === 'kicked') this.kicked = true;
+        } else if (m.t === 'denied') { clearTimeout(timer); reject(new Error(String(m.why || 'The server turned this pilot away.').slice(0, 120))); }
+        else if (m.t === 'kicked') this.kicked = String(m.why || '').slice(0, 120);
         else if (this.id) this.handle(m);
       };
       ws.onclose = () => {
@@ -1882,8 +1904,9 @@ const WNET = {
         if (this.ws !== ws) return;
         this.ws = null;
         if (G.mode === 'world') {
-          const why = this.kicked ? 'This pilot signed in from another window, so this one was disconnected.' : 'Lost the connection to the game server.';
+          const why = this.kicked ? `${this.kicked} You were disconnected.` : 'Lost the connection to the game server.';
           leaveWorld(); $('worldNote').textContent = why;
+          ACCT.refresh().then(renderAccount);
         }
         this.kicked = false;
       };
@@ -1966,19 +1989,17 @@ function renderWorldBox() {
   $('arenaBox').hidden = on && !NET.lobby;
   if (!on) return;
   const n = WNET.info?.players;
+  $('worldBox').querySelector('h3').textContent = 'Frontier';
   $('worldTxt').textContent = Number.isInteger(n) ? (n ? `${n} pilot${n === 1 ? '' : 's'} flying now` : 'Nobody flying right now') : 'Server ready';
 }
 async function startWorld() {
-  if (!WNET.url || WNET.ws) return;
+  if (!WNET.url || WNET.ws || !ACCT.owned) return;
   const btn = $('worldBtn');
   btn.disabled = true; btn.textContent = 'Connecting…'; $('worldNote').textContent = '';
-  const name = cleanName($('worldName').value) || 'Pilot';
-  $('worldName').value = name; NET.name = name;
-  try { localStorage.setItem('drone-front-callsign', name); } catch { /* storage unavailable */ }
   audio.init(); audio.ctx?.resume?.();
   let wel;
-  try { wel = await WNET.connect(name); }
-  catch (err) { WNET.ws = null; $('worldNote').textContent = `${err.message}. Check your connection and try again.`; btn.disabled = false; btn.textContent = 'Enter world'; return; }
+  try { wel = await WNET.connect(); }
+  catch (err) { WNET.ws = null; $('worldNote').textContent = err.message; btn.disabled = false; btn.textContent = 'Enter world'; return; }
   btn.disabled = false; btn.textContent = 'Enter world';
   loadLevel(WORLD);
   G.mode = 'world'; document.body.classList.add('arena-mode');
@@ -2003,11 +2024,99 @@ function leaveWorld() {
   drone.shell.color.setHex(0x8c9478);
   $('respawn').hidden = true; $('feed').textContent = '';
   loadLevel(0); showMenu();
-  WNET.detect();
 }
-$('worldName').value = NET.name;
 $('worldBtn').addEventListener('click', startWorld);
-$('worldName').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') startWorld(); });
+
+// ---------- accounts and the one-time purchase (only when served by the game server) ----------
+const FREE_SORTIES = 2;
+const ACCT = {
+  token: null, me: null, signup: false,
+  load() { try { this.token = localStorage.getItem('drone-front-session'); } catch { /* storage unavailable */ } },
+  setToken(t) {
+    this.token = t;
+    try { if (t) localStorage.setItem('drone-front-session', t); else localStorage.removeItem('drone-front-session'); } catch { /* storage unavailable */ }
+  },
+  get owned() { return !!this.me?.owned; },
+  async api(path, body) {
+    const res = await fetch(path, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let json = {};
+    try { json = await res.json(); } catch { /* empty body */ }
+    if (!res.ok) { const err = new Error(typeof json.error === 'string' ? json.error : 'Something went wrong. Try again.'); err.status = res.status; throw err; }
+    return json;
+  },
+  async refresh() {
+    if (!this.token) { this.me = null; return; }
+    try { this.me = (await this.api('/api/me')).account; }
+    catch (err) { if (err.status === 401) { this.setToken(null); this.me = null; } }
+  },
+};
+const paywalled = () => !!WNET.url && !ACCT.owned;
+function renderAccount() {
+  if (!WNET.url) return;
+  const me = ACCT.me;
+  $('acctOut').hidden = !!me; $('acctIn').hidden = !me;
+  $('acCallLab').hidden = !ACCT.signup;
+  $('acGo').textContent = ACCT.signup ? 'Create account' : 'Sign in';
+  $('acSwitch').textContent = ACCT.signup ? 'Already have an account? Sign in' : 'New pilot? Create an account';
+  $('acPass').autocomplete = ACCT.signup ? 'new-password' : 'current-password';
+  if (me) {
+    $('acWho').textContent = `Signed in as ${cleanName(me.name) || 'Pilot'} (${me.email}) · level ${me.level | 0} · ${me.credits | 0} credits`;
+    const price = WNET.info?.price || '$5';
+    $('buyTitle').textContent = `Full game · ${price}`;
+    $('buyBox').hidden = me.owned; $('buyBtn').hidden = me.owned; $('worldBtn').hidden = !me.owned;
+    $('buyBtn').textContent = `Buy the full game · ${price}`;
+    $('buyBtn').disabled = WNET.info?.checkout === false;
+    if (WNET.info?.checkout === false && !me.owned) $('worldNote').textContent = 'Purchases open soon.';
+  }
+  renderLevels();
+}
+$('acSwitch').addEventListener('click', () => { ACCT.signup = !ACCT.signup; $('worldNote').textContent = ''; renderAccount(); });
+$('acctOut').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = $('acEmail').value.trim(), password = $('acPass').value, callsign = cleanName($('acCall').value);
+  if (!email || !password || (ACCT.signup && callsign.length < 2)) {
+    $('worldNote').textContent = ACCT.signup ? 'Fill in your email, a password of at least 8 characters and a callsign.' : 'Fill in your email and password.';
+    return;
+  }
+  $('acGo').disabled = true; $('worldNote').textContent = '';
+  try {
+    const r = await ACCT.api(ACCT.signup ? '/api/signup' : '/api/login', ACCT.signup ? { email, password, callsign } : { email, password });
+    ACCT.setToken(r.token); ACCT.me = r.account; $('acPass').value = '';
+    $('worldNote').textContent = r.account.owned ? '' : 'You can play sorties 01 and 02 free. Buy the full game for the rest and the online world.';
+  } catch (err) { $('worldNote').textContent = err.message; }
+  $('acGo').disabled = false;
+  renderAccount();
+});
+for (const id of ['acEmail', 'acPass', 'acCall']) $(id).addEventListener('keydown', (e) => e.stopPropagation());
+$('signOutBtn').addEventListener('click', async () => {
+  try { await ACCT.api('/api/logout', {}); } catch { /* already signed out */ }
+  ACCT.setToken(null); ACCT.me = null; $('worldNote').textContent = 'Signed out.';
+  renderAccount();
+});
+$('buyBtn').addEventListener('click', async () => {
+  $('buyBtn').disabled = true; $('worldNote').textContent = 'Opening the secure payment page…';
+  try { location.href = (await ACCT.api('/api/checkout', {})).url; }
+  catch (err) { $('worldNote').textContent = err.message; $('buyBtn').disabled = false; await ACCT.refresh(); renderAccount(); }
+});
+async function initAccount() {
+  if (!WNET.url) return;
+  ACCT.load();
+  await ACCT.refresh();
+  renderAccount();
+  const purchase = new URLSearchParams(location.search).get('purchase');
+  if (!purchase) return;
+  history.replaceState(null, '', location.pathname);
+  if (purchase === 'cancelled') { $('worldNote').textContent = 'Payment cancelled. You have not been charged.'; return; }
+  if (purchase !== 'success' || !ACCT.me) return;
+  $('worldNote').textContent = 'Payment received. Unlocking the full game…';
+  for (let i = 0; i < 20 && !ACCT.owned; i++) { await new Promise((r) => setTimeout(r, 2000)); await ACCT.refresh(); }   // the payment webhook can lag a few seconds
+  $('worldNote').textContent = ACCT.owned ? 'Thanks for buying Drone Front. Every sortie and the online world are unlocked.' : 'Your payment is still being confirmed. Reload this page in a minute.';
+  renderAccount();
+}
 for (const id of ['callsign', 'arenaCode']) $(id).addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') startArena(); });
 
 // ---------- input ----------
@@ -2133,7 +2242,7 @@ const audio = {
 const progress = (() => { try { return JSON.parse(localStorage.getItem('drone-front-progress')) || {}; } catch { return {}; } })();
 progress.stars ||= {}; progress.best ||= {};
 function saveProgress() { try { localStorage.setItem('drone-front-progress', JSON.stringify(progress)); } catch { /* storage unavailable */ } }
-const unlocked = (i) => i === 0 || (progress.stars[LEVELS[i - 1].id] || 0) > 0;
+const unlocked = (i) => !(paywalled() && i >= FREE_SORTIES) && (i === 0 || (progress.stars[LEVELS[i - 1].id] || 0) > 0);
 
 // ---------- game state ----------
 const G = { incoming: 0, mBeep: 0, state: 'menu', mode: 'campaign', alive: true, inv: 0, paused: false, rs: 0, firing: false, level: 0, t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: 0, refill: 0,
@@ -2236,16 +2345,21 @@ function renderLevels() {
   const wrap = $('levels'); wrap.innerHTML = '';
   let total = 0;
   LEVELS.forEach((lv, i) => {
-    const m = MAPS[lv.map], st = progress.stars[lv.id] || 0, open = unlocked(i);
+    const m = MAPS[lv.map], st = progress.stars[lv.id] || 0, open = unlocked(i), paid = paywalled() && i >= FREE_SORTIES;
     total += st;
     const b = document.createElement('button');
-    b.className = `lvl${open ? '' : ' locked'}`;
+    b.className = `lvl${open ? '' : ' locked'}${paid ? ' paid' : ''}`;
     b.style.setProperty('--sky', hex(m.sky));
     b.style.setProperty('--ground', hex(m.low));
     b.innerHTML = `<div class="sw"><span class="num">${String(i + 1).padStart(2, '0')}</span></div><div class="nm">${lv.name}</div><div class="pl">${lv.place}</div>
-      <div class="st">${open ? stars(st) : `Locked · finish ${String(i).padStart(2, '0')} first`}</div>`;
-    b.setAttribute('aria-label', `${lv.name}${open ? `, ${st} of 3 stars` : ', locked'}`);
+      <div class="st">${open ? stars(st) : paid ? 'Full game' : `Locked · finish ${String(i).padStart(2, '0')} first`}</div>`;
+    b.setAttribute('aria-label', `${lv.name}${open ? `, ${st} of 3 stars` : paid ? ', part of the full game' : ', locked'}`);
     if (open) b.addEventListener('click', () => showBrief(i));
+    else if (paid) b.addEventListener('click', () => {
+      $('worldBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      $('worldNote').textContent = ACCT.me ? 'This sortie is part of the full game.' : 'Sign in or create an account, then buy the full game to play this sortie.';
+      (ACCT.me ? $('buyBtn') : $('acEmail')).focus({ preventScroll: true });
+    });
     else b.setAttribute('aria-disabled', 'true');
     wrap.appendChild(b);
   });
@@ -2278,7 +2392,12 @@ $('pauseBtn').addEventListener('click', togglePause);
 $('restartBtn').addEventListener('click', () => startLevel(G.level));
 $('quitBtn').addEventListener('click', () => { if (G.mode === 'world') leaveWorld(); else if (G.mode === 'arena') leaveArena(); else { loadLevel(G.level); showMenu(); } });
 $('retryBtn').addEventListener('click', () => startLevel(G.level));
-$('nextBtn').addEventListener('click', () => showBrief(G.level + 1));
+$('nextBtn').addEventListener('click', () => {
+  if (unlocked(G.level + 1)) { showBrief(G.level + 1); return; }
+  loadLevel(G.level); showMenu();
+  $('worldNote').textContent = 'You finished the free sorties. Buy the full game to keep going.';
+  $('worldBox').scrollIntoView({ block: 'center' });
+});
 $('levelsBtn').addEventListener('click', () => { loadLevel(G.level); showMenu(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play' && G.mode === 'campaign') togglePause(); });
 

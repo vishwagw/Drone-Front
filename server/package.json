@@ -5,10 +5,12 @@
   "description": "Authoritative multiplayer server for Drone Front",
   "type": "module",
   "main": "server.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test"
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
   },
   "dependencies": {
     "ws": "8.18.0"

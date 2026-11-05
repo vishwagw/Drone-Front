@@ -1,5 +1,11 @@
 # Drone Front: road to a commercial online game
 
+## Decided
+
+- **Platform:** browser only.
+- **Business model:** one-time purchase of $5 (USD). Sorties 01 and 02 are a free demo.
+- **Region:** United States. The server runs in Chicago (`ord`) to keep lag even across the country.
+
 ## Where it is now
 
 - **Campaign:** 7 single-player sorties in the browser (Three.js).
@@ -7,7 +13,7 @@
   Claude users can join and each page trusts the others, so it is a prototype, not
   something to sell.
 - **Online world (own server):** `server/` runs persistent shared worlds that anyone
-  with a browser can join. The server owns hull, kills, ammo and saved pilot progress
+  who owns the game can join from a browser. The server owns hull, kills, ammo and saved pilot progress
   (XP, credits, kills, deaths), checks every hit claim, snaps back impossible
   movement, gives each pilot one live session, and opens a new world when one fills
   at 32 pilots.
@@ -16,9 +22,10 @@
 
 1. **Server foundation** (done): authoritative combat, persistence, sharding,
    container build.
-2. **Accounts and storage:** real sign-in (email or OAuth), a database (Postgres)
-   instead of the JSON file, server-side rate limits per account, name rules and
-   reporting.
+2. **Accounts and the $5 purchase** (done): email sign-in, SQLite storage, Stripe
+   Checkout with webhook unlock and refunds, free demo, Fly.io config for Chicago.
+   Still to do here: password reset and email verification (needs an email provider
+   such as Postmark or Resend), callsign rules and player reporting.
 3. **A real open world:** a map several kilometres across streamed in chunks,
    zones with different terrain, server-run AI (patrols, convoys, bases to capture),
    world events, and interest management so each pilot only gets updates for what
@@ -32,10 +39,10 @@
 7. **Launch business:** store and payments, privacy policy, terms, age rating,
    refunds and support.
 
-## Decisions only you can make
+## Still open
 
-- **Platform:** browser only, or also a desktop build (Steam) or mobile.
-- **Business model:** free to play with cosmetics, a one-time price, or a subscription.
-- **Hosting budget:** one region to start, or several for lower lag.
 - **Name and art direction:** "Drone Front" is a working title; check trademarks
   before spending on marketing.
+- **Email provider** for password reset and receipts.
+- **Legal entity and policies:** who sells the game, terms of sale, refund policy,
+  privacy policy (including the California privacy rules for US players).
