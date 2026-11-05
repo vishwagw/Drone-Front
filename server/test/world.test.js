@@ -4,7 +4,7 @@ import { World, RULES } from '../world.js';
 import * as WG from '../worldgen.js';
 
 const client = () => { const inbox = []; return { inbox, send: (m) => inbox.push(m), last: (t) => inbox.filter((m) => m.t === t).at(-1) }; };
-const account = (callsign) => ({ id: Math.random(), callsign, xp: 0, credits: 0, kills: 0, deaths: 0, owned: 1 });
+const account = (callsign) => ({ id: Math.random(), callsign, xp: 0, credits: 0, kills: 0, deaths: 0 });
 const store = () => ({ dirty: new Set(), markDirty(a) { this.dirty.add(a); } });
 
 function duel() {

@@ -1,4 +1,4 @@
-# Drone Front game server: serves the game page, accounts and checkout, and the online worlds.
+# Drone Front game server: serves the game page, pilot accounts and the online worlds.
 FROM node:22-alpine
 WORKDIR /app
 COPY server/package.json server/package-lock.json ./server/

@@ -7,7 +7,6 @@ primary_region = "ord"
   PORT = "8080"
   DATA_DIR = "/data"
   TRUST_PROXY = "1"
-  PRICE_CENTS = "500"
 
 [[mounts]]
   source = "drone_front_data"

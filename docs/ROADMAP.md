@@ -1,9 +1,11 @@
-# Drone Front: road to a commercial online game
+# Drone Front: road to a public online game
 
 ## Decided
 
 - **Platform:** browser only.
-- **Business model:** one-time purchase of $5 (USD). Sorties 01 and 02 are a free demo.
+- **Business model:** free to play. Everything is open to everyone; an account is only
+  needed to fly online. (A $5 purchase was built and then removed; it is in the git
+  history if you change your mind.)
 - **Region:** United States. The server runs in Chicago (`ord`) to keep lag even across the country.
 
 ## Where it is now
@@ -22,8 +24,7 @@
 
 1. **Server foundation** (done): authoritative combat, persistence, sharding,
    container build.
-2. **Accounts and the $5 purchase** (done): email sign-in, SQLite storage, Stripe
-   Checkout with webhook unlock and refunds, free demo, Fly.io config for Chicago.
+2. **Accounts** (done): email sign-in, SQLite storage, Fly.io config for Chicago.
    Still to do here: password reset and email verification (needs an email provider
    such as Postmark or Resend), callsign rules and player reporting.
 3. **A real open world:** the streamed map is done: 4 km across in 320 m chunks
@@ -39,13 +40,13 @@
    every claimed hit, with lag compensation, to stop aim bots and wall hacks.
 6. **Production:** hosting in more than one region, monitoring, backups, crash
    reporting, load testing, an admin panel and moderation tools.
-7. **Launch business:** store and payments, privacy policy, terms, age rating,
-   refunds and support.
+7. **Public launch:** privacy policy, terms of use, age rating, support, and a way to
+   cover hosting costs if the game grows (donations, optional cosmetics or ads).
 
 ## Still open
 
 - **Name and art direction:** "Drone Front" is a working title; check trademarks
   before spending on marketing.
-- **Email provider** for password reset and receipts.
-- **Legal entity and policies:** who sells the game, terms of sale, refund policy,
+- **Email provider** for password reset.
+- **Legal entity and policies:** who runs the game, terms of use,
   privacy policy (including the California privacy rules for US players).

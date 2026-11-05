@@ -1,4 +1,4 @@
-// Accounts, sessions and purchases in SQLite (node:sqlite, no native dependencies).
+// Accounts and sessions in SQLite (node:sqlite, no native dependencies).
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,6 @@ export class Store {
         email TEXT NOT NULL UNIQUE,
         pass TEXT NOT NULL,
         callsign TEXT NOT NULL,
-        owned INTEGER NOT NULL DEFAULT 0,
         xp INTEGER NOT NULL DEFAULT 0,
         credits INTEGER NOT NULL DEFAULT 0,
         kills INTEGER NOT NULL DEFAULT 0,
@@ -31,16 +30,6 @@ export class Store {
         created INTEGER NOT NULL,
         expires INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS purchases (
-        id TEXT PRIMARY KEY,
-        account INTEGER NOT NULL REFERENCES accounts(id),
-        payment_intent TEXT,
-        amount INTEGER NOT NULL,
-        currency TEXT NOT NULL,
-        refunded INTEGER NOT NULL DEFAULT 0,
-        created INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS purchases_pi ON purchases(payment_intent);
     `);
     const p = (sql) => this.db.prepare(sql);
     this.q = {
@@ -51,14 +40,9 @@ export class Store {
       sessionAccount: p('SELECT account FROM sessions WHERE hash = ? AND expires > ?'),
       deleteSession: p('DELETE FROM sessions WHERE hash = ?'),
       purgeSessions: p('DELETE FROM sessions WHERE expires <= ?'),
-      setOwned: p('UPDATE accounts SET owned = ? WHERE id = ?'),
-      insertPurchase: p('INSERT OR IGNORE INTO purchases (id, account, payment_intent, amount, currency, created) VALUES (?, ?, ?, ?, ?, ?)'),
-      purchaseByIntent: p('SELECT * FROM purchases WHERE payment_intent = ?'),
-      refund: p('UPDATE purchases SET refunded = 1 WHERE id = ?'),
-      activePurchases: p('SELECT COUNT(*) AS n FROM purchases WHERE account = ? AND refunded = 0'),
       saveStats: p('UPDATE accounts SET callsign = ?, xp = ?, credits = ?, kills = ?, deaths = ?, last = ? WHERE id = ?'),
     };
-    this.live = new Map();    // one shared object per account, so game stats and purchases never overwrite each other
+    this.live = new Map();    // one shared object per account, so every world updates the same stats
     this.dirty = new Set();
   }
 
@@ -94,24 +78,4 @@ export class Store {
   }
   deleteSession(hash) { this.q.deleteSession.run(hash); }
   purgeSessions() { this.q.purgeSessions.run(now()); }
-
-  // ---- purchases ----
-  recordPurchase({ id, accountId, paymentIntent, amount, currency }) {
-    const acc = this.account(accountId);
-    if (!acc) return false;
-    this.q.insertPurchase.run(id, accountId, paymentIntent || null, amount, currency, now());
-    this.q.setOwned.run(1, accountId);
-    acc.owned = 1;
-    return true;
-  }
-  refundByIntent(paymentIntent) {
-    const row = this.q.purchaseByIntent.get(paymentIntent);
-    if (!row) return false;
-    this.q.refund.run(row.id);
-    const still = this.q.activePurchases.get(row.account).n > 0 ? 1 : 0;
-    this.q.setOwned.run(still, row.account);
-    const acc = this.account(row.account);
-    if (acc) acc.owned = still;
-    return true;
-  }
 }

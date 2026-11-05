@@ -1,5 +1,5 @@
-// Drone Front game server: serves the game page, the account and checkout API, and the online
-// worlds over WebSocket. Only accounts that bought the full game may enter an online world.
+// Drone Front game server: serves the game page, the account API, and the online worlds over
+// WebSocket. The game is free; signing in is what keeps a pilot's progress.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,20 +7,19 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { World, RULES, publicProfile } from './world.js';
 import { Store } from './store.js';
-import { Payments } from './payments.js';
 import { hashPassword, checkPassword, newToken, tokenHash, validEmail, validPassword, Limiter } from './auth.js';
 
 export { RULES };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '').trim().slice(0, 14);
-const accountView = (a) => ({ email: a.email, owned: !!a.owned, ...publicProfile(a) });
+const accountView = (a) => ({ email: a.email, ...publicProfile(a) });
 
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 
 export class Server {
-  constructor({ store, payments = new Payments({}), rules = RULES, clientFile = path.resolve(HERE, '..', 'index.html'), trustProxy = false }) {
-    Object.assign(this, { store, payments, R: rules, clientFile, trustProxy });
+  constructor({ store, rules = RULES, clientFile = path.resolve(HERE, '..', 'index.html'), trustProxy = false }) {
+    Object.assign(this, { store, R: rules, clientFile, trustProxy });
     this.worlds = [];
     this.online = new Map();   // account id -> session, one live session per pilot
     this.authLimit = new Limiter(10, 60_000);
@@ -59,7 +58,6 @@ export class Server {
           if (m.t !== 'hello' || session.account) return;
           const account = typeof m.session === 'string' ? this.store.accountBySession(tokenHash(m.session)) : null;
           if (!account) return deny('auth', 'Sign in to fly online.', 4001);
-          if (!account.owned) return deny('buy', 'Buy the full game to fly online.', 4003);
           this.online.get(account.id)?.kick('This pilot signed in from another window.');
           session.account = account;
           this.online.set(account.id, session);
@@ -97,7 +95,7 @@ export class Server {
     const body = () => { try { return JSON.parse(raw || '{}'); } catch { throw new HttpError(400, 'Malformed request.'); } };
     switch (route) {
       case 'GET /api/info':
-        return { game: 'drone-front', players: this.playerCount, worlds: this.worlds.length, price: this.payments.priceLabel, checkout: this.payments.enabled };
+        return { game: 'drone-front', players: this.playerCount, worlds: this.worlds.length };
       case 'POST /api/signup': {
         const { email, password, callsign } = body();
         const mail = String(email || '').trim().toLowerCase(), name = cleanName(callsign);
@@ -123,37 +121,8 @@ export class Server {
       }
       case 'GET /api/me':
         return { account: accountView(this.auth(req).account) };
-      case 'POST /api/checkout': {
-        const { account } = this.auth(req);
-        if (account.owned) throw new HttpError(409, 'You already own the full game.');
-        if (!this.payments.enabled) throw new HttpError(503, 'Purchases are not open yet.');
-        try { return { url: await this.payments.checkout(account) }; }
-        catch (err) { console.error('checkout failed:', err.message); throw new HttpError(502, 'The payment page could not be opened. Try again in a moment.'); }
-      }
-      case 'POST /api/stripe/webhook': {
-        const event = this.payments.verify(raw, req.headers['stripe-signature']);
-        if (!event) throw new HttpError(400, 'Bad signature.');
-        this.onStripeEvent(event);
-        return { received: true };
-      }
       default:
         throw new HttpError(404, 'Not found.');
-    }
-  }
-
-  onStripeEvent(event) {
-    const o = event.data?.object || {};
-    if ((event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') && o.payment_status === 'paid') {
-      const accountId = Number(o.client_reference_id || o.metadata?.account);
-      if (this.store.recordPurchase({ id: o.id, accountId, paymentIntent: o.payment_intent, amount: o.amount_total | 0, currency: o.currency || 'usd' })) {
-        console.log(`purchase ${o.id} unlocked account ${accountId}`);
-      } else console.error(`purchase ${o.id} names unknown account ${accountId}`);
-    } else if (event.type === 'charge.refunded' && o.refunded && o.payment_intent) {
-      const row = this.store.q.purchaseByIntent.get(o.payment_intent);
-      if (row && this.store.refundByIntent(o.payment_intent)) {
-        const acc = this.store.account(row.account);
-        if (acc && !acc.owned) this.online.get(acc.id)?.kick('Your purchase was refunded.');
-      }
     }
   }
 
@@ -221,17 +190,12 @@ export class Server {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const env = process.env;
   const dataDir = env.DATA_DIR || path.join(HERE, 'data');
-  const payments = new Payments({
-    secretKey: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET, publicUrl: env.PUBLIC_URL,
-    priceCents: Number(env.PRICE_CENTS) || 500, automaticTax: env.STRIPE_AUTOMATIC_TAX === '1',
-    ...(env.STRIPE_API_BASE ? { apiBase: env.STRIPE_API_BASE } : {}),
-  });
   const server = new Server({
-    store: new Store(path.join(dataDir, 'drone-front.db')), payments,
+    store: new Store(path.join(dataDir, 'drone-front.db')),
     clientFile: env.CLIENT_FILE || undefined, trustProxy: env.TRUST_PROXY === '1',
   });
   const port = await server.start(Number(env.PORT) || 8080);
-  console.log(`Drone Front server on http://localhost:${port} (purchases ${payments.enabled ? 'open' : 'closed: set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and PUBLIC_URL'})`);
+  console.log(`Drone Front server on http://localhost:${port}`);
   const shutdown = async () => { await server.stop(); process.exit(0); };
   process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 }

@@ -198,9 +198,6 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
 .arenaform input[type="email"], .arenaform input[type="password"] { width: 210px; }
 #acctIn { display: grid; gap: 12px; }
 #acctIn p { margin: 0; }
-.buy { display: grid; gap: 4px; border: 1px solid rgba(255, 182, 39, 0.45); border-radius: 6px; padding: 12px 14px; background: rgba(255, 182, 39, 0.06); }
-.buy b { font-family: var(--display); font-size: 20px; font-weight: 800; color: var(--amber); }
-.lvl.paid .st { color: var(--amber); letter-spacing: 0.02em; font-size: 12px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 
 @media (max-width: 520px) {
@@ -263,7 +260,7 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
         <div><div class="lab">Online world · always on</div><h3>Frontier</h3></div>
         <span class="online" id="worldTxt"></span>
       </div>
-      <p class="dim">A shared world that never stops. Fly in, fight whoever is there and leave when you like. The server checks every hit, and your kills, credits and XP stay on your pilot.</p>
+      <p class="dim">A shared world that never stops, free to play. Create a pilot to fly in, fight whoever is there and leave when you like. The server checks every hit, and your kills, credits and XP stay on your pilot.</p>
       <form id="acctOut" class="arenaform" novalidate>
         <label for="acEmail">Email <input id="acEmail" type="email" autocomplete="email" spellcheck="false" required></label>
         <label for="acPass">Password <input id="acPass" type="password" autocomplete="current-password" minlength="8" required></label>
@@ -273,13 +270,8 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
       </form>
       <div id="acctIn" hidden>
         <p id="acWho"></p>
-        <div class="buy" id="buyBox" hidden>
-          <b id="buyTitle">Full game · $5</b>
-          <span class="dim">One payment, no subscription. Unlocks sorties 03 to 07 and the online world.</span>
-        </div>
         <div class="actions">
-          <button id="buyBtn" class="btn" hidden>Buy the full game</button>
-          <button id="worldBtn" class="btn" hidden>Enter world</button>
+          <button id="worldBtn" class="btn">Enter world</button>
           <button id="signOutBtn" class="btn ghost">Sign out</button>
         </div>
       </div>
@@ -2292,7 +2284,7 @@ function renderWorldBox() {
   $('worldTxt').textContent = Number.isInteger(n) ? (n ? `${n} pilot${n === 1 ? '' : 's'} flying now` : 'Nobody flying right now') : 'Server ready';
 }
 async function startWorld() {
-  if (!WNET.url || WNET.ws || !ACCT.owned) return;
+  if (!WNET.url || WNET.ws || !ACCT.me) return;
   const btn = $('worldBtn');
   btn.disabled = true; btn.textContent = 'Connecting…'; $('worldNote').textContent = '';
   audio.init(); audio.ctx?.resume?.();
@@ -2330,8 +2322,7 @@ function leaveWorld() {
 }
 $('worldBtn').addEventListener('click', startWorld);
 
-// ---------- accounts and the one-time purchase (only when served by the game server) ----------
-const FREE_SORTIES = 2;
+// ---------- pilot accounts (only when served by the game server) ----------
 const ACCT = {
   token: null, me: null, signup: false,
   load() { try { this.token = localStorage.getItem('drone-front-session'); } catch { /* storage unavailable */ } },
@@ -2339,7 +2330,6 @@ const ACCT = {
     this.token = t;
     try { if (t) localStorage.setItem('drone-front-session', t); else localStorage.removeItem('drone-front-session'); } catch { /* storage unavailable */ }
   },
-  get owned() { return !!this.me?.owned; },
   async api(path, body) {
     const res = await fetch(path, {
       method: body ? 'POST' : 'GET',
@@ -2357,7 +2347,6 @@ const ACCT = {
     catch (err) { if (err.status === 401) { this.setToken(null); this.me = null; } }
   },
 };
-const paywalled = () => !!WNET.url && !ACCT.owned;
 function renderAccount() {
   if (!WNET.url) return;
   const me = ACCT.me;
@@ -2368,14 +2357,7 @@ function renderAccount() {
   $('acPass').autocomplete = ACCT.signup ? 'new-password' : 'current-password';
   if (me) {
     $('acWho').textContent = `Signed in as ${cleanName(me.name) || 'Pilot'} (${me.email}) · level ${me.level | 0} · ${me.credits | 0} credits`;
-    const price = WNET.info?.price || '$5';
-    $('buyTitle').textContent = `Full game · ${price}`;
-    $('buyBox').hidden = me.owned; $('buyBtn').hidden = me.owned; $('worldBtn').hidden = !me.owned;
-    $('buyBtn').textContent = `Buy the full game · ${price}`;
-    $('buyBtn').disabled = WNET.info?.checkout === false;
-    if (WNET.info?.checkout === false && !me.owned) $('worldNote').textContent = 'Purchases open soon.';
   }
-  renderLevels();
 }
 $('acSwitch').addEventListener('click', () => { ACCT.signup = !ACCT.signup; $('worldNote').textContent = ''; renderAccount(); });
 $('acctOut').addEventListener('submit', async (e) => {
@@ -2389,7 +2371,7 @@ $('acctOut').addEventListener('submit', async (e) => {
   try {
     const r = await ACCT.api(ACCT.signup ? '/api/signup' : '/api/login', ACCT.signup ? { email, password, callsign } : { email, password });
     ACCT.setToken(r.token); ACCT.me = r.account; $('acPass').value = '';
-    $('worldNote').textContent = r.account.owned ? '' : 'You can play sorties 01 and 02 free. Buy the full game for the rest and the online world.';
+    $('worldNote').textContent = ACCT.signup ? 'Pilot created. Enter the world whenever you are ready.' : '';
   } catch (err) { $('worldNote').textContent = err.message; }
   $('acGo').disabled = false;
   renderAccount();
@@ -2400,24 +2382,10 @@ $('signOutBtn').addEventListener('click', async () => {
   ACCT.setToken(null); ACCT.me = null; $('worldNote').textContent = 'Signed out.';
   renderAccount();
 });
-$('buyBtn').addEventListener('click', async () => {
-  $('buyBtn').disabled = true; $('worldNote').textContent = 'Opening the secure payment page…';
-  try { location.href = (await ACCT.api('/api/checkout', {})).url; }
-  catch (err) { $('worldNote').textContent = err.message; $('buyBtn').disabled = false; await ACCT.refresh(); renderAccount(); }
-});
 async function initAccount() {
   if (!WNET.url) return;
   ACCT.load();
   await ACCT.refresh();
-  renderAccount();
-  const purchase = new URLSearchParams(location.search).get('purchase');
-  if (!purchase) return;
-  history.replaceState(null, '', location.pathname);
-  if (purchase === 'cancelled') { $('worldNote').textContent = 'Payment cancelled. You have not been charged.'; return; }
-  if (purchase !== 'success' || !ACCT.me) return;
-  $('worldNote').textContent = 'Payment received. Unlocking the full game…';
-  for (let i = 0; i < 20 && !ACCT.owned; i++) { await new Promise((r) => setTimeout(r, 2000)); await ACCT.refresh(); }   // the payment webhook can lag a few seconds
-  $('worldNote').textContent = ACCT.owned ? 'Thanks for buying Drone Front. Every sortie and the online world are unlocked.' : 'Your payment is still being confirmed. Reload this page in a minute.';
   renderAccount();
 }
 for (const id of ['callsign', 'arenaCode']) $(id).addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') startArena(); });
@@ -2545,7 +2513,7 @@ const audio = {
 const progress = (() => { try { return JSON.parse(localStorage.getItem('drone-front-progress')) || {}; } catch { return {}; } })();
 progress.stars ||= {}; progress.best ||= {};
 function saveProgress() { try { localStorage.setItem('drone-front-progress', JSON.stringify(progress)); } catch { /* storage unavailable */ } }
-const unlocked = (i) => !(paywalled() && i >= FREE_SORTIES) && (i === 0 || (progress.stars[LEVELS[i - 1].id] || 0) > 0);
+const unlocked = (i) => i === 0 || (progress.stars[LEVELS[i - 1].id] || 0) > 0;
 
 // ---------- game state ----------
 const G = { incoming: 0, mBeep: 0, state: 'menu', mode: 'campaign', alive: true, inv: 0, paused: false, rs: 0, firing: false, level: 0, t: 0, score: 0, kills: 0, hull: 100, battery: 100, heat: 0, overheated: false, fireT: 0, rocketT: 0, rockets: 0, refill: 0,
@@ -2648,21 +2616,16 @@ function renderLevels() {
   const wrap = $('levels'); wrap.innerHTML = '';
   let total = 0;
   LEVELS.forEach((lv, i) => {
-    const m = MAPS[lv.map], st = progress.stars[lv.id] || 0, open = unlocked(i), paid = paywalled() && i >= FREE_SORTIES;
+    const m = MAPS[lv.map], st = progress.stars[lv.id] || 0, open = unlocked(i);
     total += st;
     const b = document.createElement('button');
-    b.className = `lvl${open ? '' : ' locked'}${paid ? ' paid' : ''}`;
+    b.className = `lvl${open ? '' : ' locked'}`;
     b.style.setProperty('--sky', hex(m.sky));
     b.style.setProperty('--ground', hex(m.low));
     b.innerHTML = `<div class="sw"><span class="num">${String(i + 1).padStart(2, '0')}</span></div><div class="nm">${lv.name}</div><div class="pl">${lv.place}</div>
-      <div class="st">${open ? stars(st) : paid ? 'Full game' : `Locked · finish ${String(i).padStart(2, '0')} first`}</div>`;
-    b.setAttribute('aria-label', `${lv.name}${open ? `, ${st} of 3 stars` : paid ? ', part of the full game' : ', locked'}`);
+      <div class="st">${open ? stars(st) : `Locked · finish ${String(i).padStart(2, '0')} first`}</div>`;
+    b.setAttribute('aria-label', `${lv.name}${open ? `, ${st} of 3 stars` : ', locked'}`);
     if (open) b.addEventListener('click', () => showBrief(i));
-    else if (paid) b.addEventListener('click', () => {
-      $('worldBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
-      $('worldNote').textContent = ACCT.me ? 'This sortie is part of the full game.' : 'Sign in or create an account, then buy the full game to play this sortie.';
-      (ACCT.me ? $('buyBtn') : $('acEmail')).focus({ preventScroll: true });
-    });
     else b.setAttribute('aria-disabled', 'true');
     wrap.appendChild(b);
   });
@@ -2695,12 +2658,7 @@ $('pauseBtn').addEventListener('click', togglePause);
 $('restartBtn').addEventListener('click', () => startLevel(G.level));
 $('quitBtn').addEventListener('click', () => { if (G.mode === 'world') leaveWorld(); else if (G.mode === 'arena') leaveArena(); else { loadLevel(G.level); showMenu(); } });
 $('retryBtn').addEventListener('click', () => startLevel(G.level));
-$('nextBtn').addEventListener('click', () => {
-  if (unlocked(G.level + 1)) { showBrief(G.level + 1); return; }
-  loadLevel(G.level); showMenu();
-  $('worldNote').textContent = 'You finished the free sorties. Buy the full game to keep going.';
-  $('worldBox').scrollIntoView({ block: 'center' });
-});
+$('nextBtn').addEventListener('click', () => showBrief(G.level + 1));
 $('levelsBtn').addEventListener('click', () => { loadLevel(G.level); showMenu(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play' && G.mode === 'campaign') togglePause(); });
 
