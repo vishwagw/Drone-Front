@@ -250,7 +250,19 @@ h3 { margin: 2px 0 0; font-family: var(--display); font-weight: 800; font-size: 
     <h1>Drone Front</h1>
     <p>Fly an armed quadcopter from a forward operating base. Each sortie is a new battlefield with its own objective, from a qualification run on the test range to breaking an armoured push and bringing down a drone carrier at night. Finish a sortie to unlock the next.</p>
     <div class="levels" id="levels"></div>
-    <section class="arena" aria-label="Online arena">
+    <section class="arena" id="worldBox" aria-label="Online world" hidden>
+      <div class="arenahead">
+        <div><div class="lab">Online world · always on</div><h3>Frontier</h3></div>
+        <span class="online" id="worldTxt"></span>
+      </div>
+      <p class="dim">A shared world that never stops. Fly in, fight whoever is there and leave when you like. The server checks every hit, and your kills, credits and XP stay on your pilot.</p>
+      <div class="arenaform">
+        <label for="worldName">Callsign <input id="worldName" maxlength="14" autocomplete="off" spellcheck="false"></label>
+        <button id="worldBtn" class="btn">Enter world</button>
+      </div>
+      <p class="dim" id="worldNote"></p>
+    </section>
+    <section class="arena" id="arenaBox" aria-label="Online arena">
       <div class="arenahead">
         <div><div class="lab">Online arena · free-for-all</div><h3>Fight other pilots</h3></div>
         <span class="online" id="onlineTxt"></span>
@@ -890,7 +902,7 @@ function blast(pos, R, dmg) {
   explode(pos, 1.1);
   for (const e of ents.slice()) {
     const d = e.pos.distanceTo(pos), reach = R + e.radius;
-    if (d < reach) damage(e, dmg * (1 - 0.5 * d / reach), pos);
+    if (d < reach) damage(e, dmg * (1 - 0.5 * d / reach), pos, 'rocket');
   }
 }
 
@@ -1035,13 +1047,17 @@ function clearCombat() {
   for (const f of fireballs) { f.life = 0; f.m.visible = false; }
   smokers.length = 0;
   NET.pilots.clear();
+  WNET.pilots.clear();
 }
 
 // ---------- damage ----------
-function damage(e, n, at) {
-  if (e.kind === 'pilot') {   // another player: claim the hit, their page applies it
-    if (!e.net || !e.net.al || e.net.iv || e.net.r !== NET.round) return;
-    NET.claim(e.peer, n); e.flash = 1;
+function damage(e, n, at, w = 'gun') {
+  if (e.kind === 'pilot') {   // another player: claim the hit; the server (world) or their page (arena) applies it
+    if (!e.net || !e.net.al || e.net.iv) return;
+    if (G.mode === 'world') WNET.hit(e.peer, w);
+    else if (e.net.r === NET.round) NET.claim(e.peer, n);
+    else return;
+    e.flash = 1;
     burst(at, 3, [0xffe08a, 0xffffff], 6, 0.25, 0.6, 0);
     audio.blip(1800, 1200, 0.03, 'square', 0.03);
     return;
@@ -1062,6 +1078,14 @@ function kill(e) {
   removeEnt(e, !e.air && e.kind !== 'pod' && e.kind !== 'core');
 }
 function hurt(n, msg, by = null) {
+  if (G.mode === 'world') {   // only self-inflicted damage (crashes) starts here; the server applies it
+    if (G.state !== 'play' || !G.alive || G.inv > 0) return;
+    WNET.send({ t: 'self', n: Math.min(50, n) });
+    G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + n / 40);
+    G.shake = Math.max(G.shake, 0.35 + n / 50);
+    audio.hurt();
+    return;
+  }
   if (G.mode === 'arena') {
     if (G.state !== 'play' || !G.alive || G.inv > 0) return;
     if (by) G.lastHit = { by, t: G.t };
@@ -1646,7 +1670,7 @@ const NET = {
     if (!this.lobby) return;
     this.lobby.onPeers(() => renderOnline(), () => { this.lobby = null; renderArenaBox(); });
   },
-  myKey() { return this.me ? 'p_' + this.me : null; },
+  myKey() { if (G.mode === 'world') return WNET.myKey(); return this.me ? 'p_' + this.me : null; },
   nameOf(peer) { return this.pilots.get(peer)?.name || 'another pilot'; },
   resetRound(r) { this.round = r; this.hits = {}; this.deathsBy = {}; this.seen = {}; this.prevDb = {}; this.roundOverAt = 0; },
   async join(code) {
@@ -1809,6 +1833,181 @@ function leaveArena() {
   loadLevel(0); showMenu();
 }
 $('joinBtn').addEventListener('click', startArena);
+
+// ---------- online world (own game server over WebSocket) ----------
+const WORLD = { ...ARENA, id: 'world', name: 'Frontier', setup() {}, tick() {},
+  status: () => {
+    const rows = [], pr = WNET.profile;
+    if (pr) rows.push(['Pilot', `Lv ${pr.level | 0} · ${pr.credits | 0} cr`, false, 'me']);
+    for (const a of WNET.list.slice(0, 6)) rows.push([a.me ? `${a.n} (you)` : a.n, `${a.k} K · ${a.d} D`, false, a.me ? 'me' : '']);
+    return rows;
+  },
+};
+const WNET = {
+  url: null, ws: null, id: null, world: '', pilots: new Map(), list: [], profile: null, sendT: 0, gun: {}, info: null,
+  async detect() {
+    const q = new URLSearchParams(location.search).get('server');
+    if (q && /^wss?:\/\//.test(q)) this.url = q;
+    else if (/^https?:$/.test(location.protocol)) {
+      try {
+        const j = await (await fetch('/api/info', { cache: 'no-store' })).json();
+        if (j && j.game === 'drone-front') { this.url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`; this.info = j; }
+      } catch { /* not served by a Drone Front server */ }
+    }
+    renderWorldBox();
+  },
+  myKey() { return this.id ? 'p_' + this.id : null; },
+  send(m) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); },
+  connect(name) {
+    return new Promise((resolve, reject) => {
+      let token = null;
+      try { token = localStorage.getItem('drone-front-token'); } catch { /* storage unavailable */ }
+      const ws = new WebSocket(this.url);
+      this.ws = ws;
+      const timer = setTimeout(() => { reject(new Error('The game server did not answer')); ws.close(); }, 8000);
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', token, name, color: NET.color }));
+      ws.onmessage = (ev) => {
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.t === 'welcome') {
+          clearTimeout(timer);
+          this.id = String(m.id); this.profile = m.profile; this.world = cleanName(m.world) || 'Frontier';
+          try { localStorage.setItem('drone-front-token', m.token); } catch { /* storage unavailable */ }
+          resolve(m);
+        } else if (m.t === 'kicked') this.kicked = true;
+        else if (this.id) this.handle(m);
+      };
+      ws.onclose = () => {
+        clearTimeout(timer);
+        reject(new Error('Could not reach the game server'));
+        if (this.ws !== ws) return;
+        this.ws = null;
+        if (G.mode === 'world') {
+          const why = this.kicked ? 'This pilot signed in from another window, so this one was disconnected.' : 'Lost the connection to the game server.';
+          leaveWorld(); $('worldNote').textContent = why;
+        }
+        this.kicked = false;
+      };
+    });
+  },
+  hit(peer, w) {
+    if (w === 'rocket') this.send({ t: 'hit', target: peer, w: 'rocket' });
+    else this.gun[peer] = (this.gun[peer] || 0) + 1;
+  },
+  handle(m) {
+    if (G.mode !== 'world') return;
+    if (m.t === 'snap') {
+      const me = m.me || {};
+      G.hull = clamp(Number(me.h) || 0, 0, 100);
+      G.rockets = clamp(me.rk | 0, 0, L.rockets);
+      G.inv = me.iv ? 0.5 : 0;
+      const live = new Set();
+      for (const o of Array.isArray(m.pl) ? m.pl : []) {
+        const id = String(o.id); live.add(id);
+        let e = this.pilots.get(id);
+        if (!e || !ents.includes(e)) { e = addPilot(id); this.pilots.set(id, e); }
+        e.net = o; e.recv = Date.now();
+      }
+      for (const [id, e] of this.pilots) if (!live.has(id)) { removeEnt(e); this.pilots.delete(id); }
+    } else if (m.t === 'dmg') {
+      G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + (Number(m.n) || 0) / 40);
+      G.shake = Math.max(G.shake, 0.35 + (Number(m.n) || 0) / 50);
+      G.hull = clamp(Number(m.h) || 0, 0, 100);
+      audio.hurt();
+      if (G.hull < 30 && !G.warned.hull) { G.warned.hull = true; toast('Hull critical: land on the pad to repair', 'warn'); }
+      if (G.hull > 50) G.warned.hull = false;
+    } else if (m.t === 'kill') {
+      const killerMe = String(m.k) === this.id, victimMe = String(m.v) === this.id;
+      feedLine(m.k ? (killerMe ? 'You' : cleanName(m.kn) || 'Pilot') : null, victimMe ? 'you' : cleanName(m.vn) || 'Pilot', victimMe);
+      if (victimMe) {
+        G.alive = false; G.firing = false; G.respawnT = 4; mouseFire = false;
+        explode(drone.pos, 1.2); drone.group.visible = false; drone.vel.set(0, 0, 0);
+        $('respawnTitle').textContent = m.k ? `Downed by ${cleanName(m.kn) || 'another pilot'}` : 'You went down';
+        $('respawn').hidden = false;
+      }
+      if (killerMe && !victimMe) { pop('+1 kill'); audio.blip(700, 1400, 0.25, 'triangle', 0.12); }
+    } else if (m.t === 'spawn') placeSpawn(m);
+    else if (m.t === 'board') {
+      this.list = (Array.isArray(m.list) ? m.list : []).map((a) => ({ id: String(a.id), n: cleanName(a.n) || 'Pilot', k: a.k | 0, d: a.d | 0, me: String(a.id) === this.id }));
+    } else if (m.t === 'profile') this.profile = m.profile;
+    else if (m.t === 'correct' && Array.isArray(m.p) && m.p.every(Number.isFinite)) { drone.pos.set(m.p[0], m.p[1], m.p[2]); drone.vel.set(0, 0, 0); }
+  },
+  tick(dt) {
+    this.sendT -= dt;
+    if (this.sendT > 0) return;
+    this.sendT = 1 / 15;
+    const d = drone, r2 = (x) => Math.round(x * 100) / 100;
+    if (G.alive) this.send({ t: 'state', p: [r2(d.pos.x), r2(d.pos.y), r2(d.pos.z)], v: [r2(d.vel.x), r2(d.vel.y), r2(d.vel.z)],
+      y: Math.round(d.yaw * 1000) / 1000, a: Math.round(d.aim * 1000) / 1000, f: G.firing ? 1 : 0, rs: G.rs,
+      lk: G.lock?.kind === 'pilot' ? 'p_' + G.lock.peer : null });
+    for (const [peer, n] of Object.entries(this.gun)) this.send({ t: 'hit', target: peer, w: 'gun', n });
+    this.gun = {};
+  },
+};
+function feedLine(killer, victim, victimIsMe) {
+  const el = document.createElement('div');
+  if (killer) { const k = document.createElement('b'); k.textContent = killer; el.append(k, ` downed ${victim}`); }
+  else el.textContent = `${victimIsMe ? 'You' : victim} went down`;
+  $('feed').prepend(el);
+  while ($('feed').children.length > 4) $('feed').lastChild.remove();
+  setTimeout(() => el.remove(), 6000);
+}
+function placeSpawn(s) {
+  if (![s.x, s.z].every(Number.isFinite)) return;
+  drone.pos.set(s.x, terrainH(s.x, s.z) + 24, s.z); drone.vel.set(0, 0, 0);
+  drone.yaw = Number.isFinite(s.y) ? s.y : 0; drone.aim = -0.08;
+  drone.powered = true; drone.airborne = true; drone.agl = 24; drone.group.visible = true;
+  Object.assign(G, { alive: true, heat: 0, overheated: false, lock: null });
+  $('respawn').hidden = true;
+  camera.position.set(drone.pos.x + Math.sin(drone.yaw) * 12, drone.pos.y + 5, drone.pos.z + Math.cos(drone.yaw) * 12);
+}
+function renderWorldBox() {
+  const on = !!WNET.url;
+  $('worldBox').hidden = !on;
+  $('arenaBox').hidden = on && !NET.lobby;
+  if (!on) return;
+  const n = WNET.info?.players;
+  $('worldTxt').textContent = Number.isInteger(n) ? (n ? `${n} pilot${n === 1 ? '' : 's'} flying now` : 'Nobody flying right now') : 'Server ready';
+}
+async function startWorld() {
+  if (!WNET.url || WNET.ws) return;
+  const btn = $('worldBtn');
+  btn.disabled = true; btn.textContent = 'Connecting…'; $('worldNote').textContent = '';
+  const name = cleanName($('worldName').value) || 'Pilot';
+  $('worldName').value = name; NET.name = name;
+  try { localStorage.setItem('drone-front-callsign', name); } catch { /* storage unavailable */ }
+  audio.init(); audio.ctx?.resume?.();
+  let wel;
+  try { wel = await WNET.connect(name); }
+  catch (err) { WNET.ws = null; $('worldNote').textContent = `${err.message}. Check your connection and try again.`; btn.disabled = false; btn.textContent = 'Enter world'; return; }
+  btn.disabled = false; btn.textContent = 'Enter world';
+  loadLevel(WORLD);
+  G.mode = 'world'; document.body.classList.add('arena-mode');
+  Object.assign(G, { t: 0, score: 0, kills: 0, battery: 100, refill: 0, refill2: 0, rs: 0, firing: false, paused: false,
+    shake: 0, hurtFlash: 0, bump: 0, warned: {}, fireMul: 1, hull: 100, rockets: L.rockets, inv: 0.5 });
+  S = { spawned: {}, ready: false, queue: [] };
+  drone.shell.color.setHex(COLORS[NET.color]);
+  $('hLevel').innerHTML = `<small>World</small>${esc(WNET.world)}`;
+  objCache = '';
+  for (const id of ['menu', 'brief', 'end', 'pause']) $(id).hidden = true;
+  $('feed').textContent = '';
+  $('hud').hidden = false;
+  G.state = 'play';
+  placeSpawn(wel.spawn);
+  requestLock();
+  toast('Kills earn credits and XP for your pilot', 'amber');
+}
+function leaveWorld() {
+  const ws = WNET.ws; WNET.ws = null; WNET.id = null; WNET.list = [];
+  ws?.close();
+  G.mode = 'campaign'; G.paused = false; document.body.classList.remove('arena-mode');
+  drone.shell.color.setHex(0x8c9478);
+  $('respawn').hidden = true; $('feed').textContent = '';
+  loadLevel(0); showMenu();
+  WNET.detect();
+}
+$('worldName').value = NET.name;
+$('worldBtn').addEventListener('click', startWorld);
+$('worldName').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') startWorld(); });
 for (const id of ['callsign', 'arenaCode']) $(id).addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') startArena(); });
 
 // ---------- input ----------
@@ -1850,7 +2049,7 @@ addEventListener('mousemove', (e) => {
   drone.aim = clamp(drone.aim - e.movementY * 0.0022, -0.9, 0.45);
 });
 document.addEventListener('pointerlockchange', () => {
-  if (!pointerLocked()) { lockLostAt = performance.now(); mouseFire = false; if (G.state === 'play' && !(G.mode === 'arena' && G.paused)) togglePause(); }
+  if (!pointerLocked()) { lockLostAt = performance.now(); mouseFire = false; if (G.state === 'play' && !(G.mode !== 'campaign' && G.paused)) togglePause(); }
 });
 function makeStick(el, out) {
   const knob = el.querySelector('.knob'); let id = null, cx = 0, cy = 0; const R = 44;
@@ -1979,10 +2178,10 @@ function startLevel(i) {
   toast(L.goals[0], 'amber');
 }
 function togglePause() {
-  if (G.mode === 'arena') {   // the arena never stops: pausing only takes your hands off the sticks
+  if (G.mode !== 'campaign') {   // online play never stops: pausing only takes your hands off the sticks
     G.paused = !G.paused;
-    $('pause').querySelector('h2').textContent = 'The arena is still live';
-    $('quitBtn').textContent = 'Leave arena';
+    $('pause').querySelector('h2').textContent = G.mode === 'world' ? 'The world is still live' : 'The arena is still live';
+    $('quitBtn').textContent = G.mode === 'world' ? 'Leave world' : 'Leave arena';
     $('pause').hidden = !G.paused;
     if (G.paused) { mouseFire = false; if (pointerLocked()) document.exitPointerLock?.(); } else requestLock();
     return;
@@ -2077,11 +2276,11 @@ $('backBtn').addEventListener('click', showMenu);
 $('resumeBtn').addEventListener('click', togglePause);
 $('pauseBtn').addEventListener('click', togglePause);
 $('restartBtn').addEventListener('click', () => startLevel(G.level));
-$('quitBtn').addEventListener('click', () => { if (G.mode === 'arena') leaveArena(); else { loadLevel(G.level); showMenu(); } });
+$('quitBtn').addEventListener('click', () => { if (G.mode === 'world') leaveWorld(); else if (G.mode === 'arena') leaveArena(); else { loadLevel(G.level); showMenu(); } });
 $('retryBtn').addEventListener('click', () => startLevel(G.level));
 $('nextBtn').addEventListener('click', () => showBrief(G.level + 1));
 $('levelsBtn').addEventListener('click', () => { loadLevel(G.level); showMenu(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play' && G.mode !== 'arena') togglePause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play' && G.mode === 'campaign') togglePause(); });
 
 // ---------- player flight ----------
 const fwdV = new THREE.Vector3(), rightV = new THREE.Vector3(), aimV = new THREE.Vector3(), muzzle = new THREE.Vector3();
@@ -2135,7 +2334,7 @@ function updateDrone(dt, inp) {
   if (!d.powered && !d.airborne) return finish('flat');
 
   const move = Math.min(1, Math.hypot(inp.fwd, inp.strafe));
-  if (d.airborne && d.powered && G.mode !== 'arena') G.battery -= (0.3 + 0.22 * move + 0.38 * Math.max(0, inp.vert)) * dt;
+  if (d.airborne && d.powered && G.mode === 'campaign') G.battery -= (0.3 + 0.22 * move + 0.38 * Math.max(0, inp.vert)) * dt;
   if (G.mode === 'arena') { G.refill2 += dt; if (G.refill2 > 8 && G.rockets < L.rockets) { G.refill2 = 0; G.rockets++; } }
   d.charging = !d.airborne && onPad(d.pos.x, d.pos.z);
   if (d.charging) {
@@ -2237,13 +2436,14 @@ function setChip(text, kind) {
 function updateChip() {
   const d = drone, extra = L.chip?.();
   const MSL = 'Missile inbound: break hard or shoot it down';
-  if (G.mode === 'arena') {
-    const others = NET.pilots.size;
+  if (G.mode !== 'campaign') {
+    const others = (G.mode === 'world' ? WNET : NET).pilots.size;
     if (!G.alive) setChip('Downed', 'warn');
     else if (G.incoming) setChip(MSL, 'warn');
     else if (G.inv > 0) setChip('Spawn shield on', 'ok');
     else if (G.overheated) setChip('Gun overheated: cooling down', 'warn');
     else if (G.lock) setChip(`Locked: ${G.lock.name} · ${Math.round(G.lock.pos.distanceTo(d.pos))} m`, G.lock.kind === 'pilot' ? 'amber' : 'ok');
+    else if (G.mode === 'world') setChip(others ? `${others + 1} pilots in ${WNET.world}` : 'Nobody else is flying here right now', 'ok');
     else setChip(others ? `${others + 1} pilots in this arena` : 'Nobody else here yet: practice bots are flying', 'ok');
     return;
   }
@@ -2334,7 +2534,7 @@ function updateHUD(dt) {
   if (html !== objCache) { $('hObj').innerHTML = html; objCache = html; }
   $('hScore').textContent = G.score.toLocaleString();
   $('hTime').textContent = fmtTime(G.t);
-  $('hTime').style.color = G.t > L.par && G.mode !== 'arena' ? 'var(--muted)' : '';
+  $('hTime').style.color = G.t > L.par && G.mode === 'campaign' ? 'var(--muted)' : '';
   $('hAlt').textContent = `${Math.max(0, d.agl).toFixed(1)} m`;
   const setBar = (id, v, lo, mid) => { const el = $(id); el.style.width = `${v}%`; el.style.backgroundColor = v < lo ? 'var(--warn)' : v < mid ? 'var(--amber)' : 'var(--ok)'; };
   setBar('hHull', G.hull, 30, 60); $('hHullTxt').textContent = `${Math.ceil(G.hull)}%`;
@@ -2396,7 +2596,8 @@ renderLevels();
 
 const NO_INPUT = { fwd: 0, strafe: 0, vert: 0, yaw: 0, pitch: 0, fire: false };
 let last = performance.now(), menuT = 0;
-NET.init();
+NET.init().then(renderWorldBox);
+WNET.detect();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) $('toast').classList.remove('show'); }
@@ -2404,7 +2605,7 @@ function frame(now) {
   if (G.state === 'play' || G.state === 'over') {
     if (G.state === 'play') {
       if (!treeLayer || map.width !== Math.round(map.clientWidth * Math.min(devicePixelRatio, 2))) sizeMap();
-      const arena = G.mode === 'arena';
+      const arena = G.mode !== 'campaign';
       const inp = arena && (G.paused || !G.alive) ? NO_INPUT : readInput();
       if (G.alive) updateDrone(dt, inp);
       if (G.state === 'play' && G.alive) { updateLock(); updateWeapons(dt, inp); } else G.firing = false;
@@ -2414,9 +2615,9 @@ function frame(now) {
         if (!G.alive) {
           G.respawnT -= dt;
           $('respawnText').textContent = `Respawning in ${Math.max(1, Math.ceil(G.respawnT))}`;
-          if (G.respawnT <= 0) respawnArena();
+          if (G.respawnT <= 0 && G.mode === 'arena') respawnArena();
         }
-        NET.tick(dt);
+        if (G.mode === 'world') WNET.tick(dt); else NET.tick(dt);
       }
     }
     updateEnts(dt);
