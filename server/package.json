@@ -1,0 +1,18 @@
+{
+  "name": "drone-front-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Authoritative multiplayer server for Drone Front",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}
